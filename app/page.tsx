@@ -17,12 +17,25 @@ const aiFeatures = [
   "Auto-apply preferences like quiet hours and buffers."
 ];
 
+function formatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  });
+}
+
 export default function HomePage() {
   const hasConvexUrl = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
   const welcome = useQuery(api.notes.getWelcome);
+  const todayEvents = useQuery(api.events.getTodayEvents);
+
   const welcomeMessage = hasConvexUrl
     ? welcome?.message ?? "Connecting to Convex..."
     : "Set NEXT_PUBLIC_CONVEX_URL to fetch live data.";
+
+  const isLoading = todayEvents === undefined;
+  const hasEvents = todayEvents && todayEvents.length > 0;
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-white to-indigo-50">
@@ -85,33 +98,38 @@ export default function HomePage() {
             <div className="rounded-3xl bg-white p-8 shadow-lg shadow-indigo-100">
               <h2 className="text-xl font-semibold text-slate-900">Today at a glance</h2>
               <div className="mt-6 space-y-4">
-                {[
-                  {
-                    time: "7:30 AM",
-                    title: "School drop-off",
-                    detail: "Reminder: bring art supplies"
-                  },
-                  {
-                    time: "12:00 PM",
-                    title: "Lunch with grandparents",
-                    detail: "Google Meet link ready"
-                  },
-                  {
-                    time: "6:00 PM",
-                    title: "Family dinner",
-                    detail: "Auto-added 15 min prep time"
-                  }
-                ].map((event) => (
-                  <div key={event.title} className="flex items-start gap-4 rounded-2xl border border-slate-100 p-4">
-                    <div className="min-w-[72px] rounded-full bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">
-                      {event.time}
-                    </div>
-                    <div>
-                      <p className="font-semibold text-slate-900">{event.title}</p>
-                      <p className="text-sm text-slate-600">{event.detail}</p>
-                    </div>
+                {isLoading ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+                    Loading today&apos;s events...
                   </div>
-                ))}
+                ) : hasEvents ? (
+                  todayEvents.map((event) => (
+                    <div
+                      key={event._id}
+                      className="flex items-start gap-4 rounded-2xl border border-slate-100 p-4"
+                    >
+                      <div className="min-w-[80px] rounded-full bg-indigo-50 px-3 py-2 text-center text-sm font-semibold text-indigo-700">
+                        {formatTime(event.start)}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-semibold text-slate-900">{event.title}</p>
+                        <p className="text-sm text-slate-600">
+                          {event.description || event.location || "No details"}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center">
+                    <p className="text-sm text-slate-500">No events scheduled for today.</p>
+                    <Link
+                      href="/calendar"
+                      className="mt-2 inline-block text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                    >
+                      Add an event
+                    </Link>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -119,9 +137,15 @@ export default function HomePage() {
               <div className="rounded-3xl border border-indigo-100 bg-white p-6 shadow-sm">
                 <h3 className="text-lg font-semibold text-slate-900">Convex connection</h3>
                 <p className="mt-2 text-sm text-slate-600">{welcomeMessage}</p>
-                <p className="mt-2 text-xs text-slate-500">
-                  Configure <span className="font-semibold">NEXT_PUBLIC_CONVEX_URL</span> to connect.
-                </p>
+                {hasConvexUrl ? (
+                  <p className="mt-2 text-xs text-emerald-600 font-medium">
+                    Connected and ready
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Configure <span className="font-semibold">NEXT_PUBLIC_CONVEX_URL</span> to connect.
+                  </p>
+                )}
               </div>
               <div className="rounded-3xl bg-white p-6 shadow-lg shadow-indigo-100">
                 <h3 className="text-lg font-semibold text-slate-900">AI chat highlights</h3>
