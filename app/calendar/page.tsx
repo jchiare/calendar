@@ -26,10 +26,30 @@ type EventFormData = {
   location: string;
 };
 
+type DragInfo = {
+  dayIndex: number;
+  time: number; // time in hours (e.g., 9.25 for 9:15 AM)
+};
+
+type DragMode = 'create' | 'move' | 'resize-top' | 'resize-bottom';
+
+type EventDragInfo = {
+  event: EventData;
+  originalStart: number;
+  originalEnd: number;
+  dayIndex: number;
+};
+
 const DEFAULT_START_HOUR = 7;
 const DEFAULT_END_HOUR = 19;
 const EXTENDED_START_HOUR = 0;
 const EXTENDED_END_HOUR = 24;
+const TIME_INCREMENT_MINUTES = 15; // 15-minute buckets
+const DRAG_THRESHOLD_PX = 5; // Minimum pixels to move before starting drag
+
+// NOTE: Touch/mobile support is not yet optimized. This feature currently
+// only supports mouse interactions. Touch events for tablets/phones would
+// require additional implementation (onTouchStart, onTouchMove, onTouchEnd).
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
@@ -59,13 +79,28 @@ function parseTimeToHours(time: string): number {
   return hours + minutes / 60;
 }
 
+function snapToTimeIncrement(hours: number): number {
+  // Snap to nearest 15-minute increment
+  const totalMinutes = hours * 60;
+  const snappedMinutes = Math.round(totalMinutes / TIME_INCREMENT_MINUTES) * TIME_INCREMENT_MINUTES;
+  return snappedMinutes / 60;
+}
+
+function hoursToTimeString(hours: number): string {
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 function EventModal({
   isOpen,
   onClose,
   onSave,
   onDelete,
   initialData,
-  selectedDate
+  selectedDate,
+  selectedStartTime,
+  selectedEndTime
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -73,6 +108,8 @@ function EventModal({
   onDelete?: () => void;
   initialData?: EventData;
   selectedDate?: Date;
+  selectedStartTime?: string;
+  selectedEndTime?: string;
 }) {
   const [formData, setFormData] = useState<EventFormData>({
     title: "",
@@ -100,12 +137,12 @@ function EventModal({
         title: "",
         description: "",
         date: selectedDate.toISOString().split("T")[0],
-        startTime: "09:00",
-        endTime: "10:00",
+        startTime: selectedStartTime || "09:00",
+        endTime: selectedEndTime || "10:00",
         location: ""
       });
     }
-  }, [initialData, selectedDate, isOpen]);
+  }, [initialData, selectedDate, selectedStartTime, selectedEndTime, isOpen]);
 
   if (!isOpen) return null;
 
@@ -258,7 +295,25 @@ export default function CalendarPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EventData | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
+  const [selectedStartTime, setSelectedStartTime] = useState<string | undefined>();
+  const [selectedEndTime, setSelectedEndTime] = useState<string | undefined>();
   const seededRef = useRef(false);
+
+  // Drag state for create, move, and resize operations
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragMode, setDragMode] = useState<DragMode | null>(null);
+  const [dragStart, setDragStart] = useState<DragInfo | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<DragInfo | null>(null);
+  const [eventDragInfo, setEventDragInfo] = useState<EventDragInfo | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  // Use refs for synchronous access during mouse events
+  const dragStartRef = useRef<DragInfo | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragModeRef = useRef<DragMode | null>(null);
+  const eventDragInfoRef = useRef<EventDragInfo | null>(null);
+  // Track initial mouse position for drag threshold
+  const mouseStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const hasDragStartedRef = useRef(false);
 
   const events = useQuery(api.events.getWeekEvents, {
     weekStart: currentWeekStart.getTime()
@@ -416,17 +471,398 @@ export default function CalendarPage() {
     }
   }, [editingEvent, deleteEvent]);
 
-  const openNewEventModal = useCallback((date?: Date) => {
+  const openNewEventModal = useCallback((date?: Date, startTime?: string, endTime?: string) => {
     setEditingEvent(null);
     setSelectedDate(date);
+    setSelectedStartTime(startTime);
+    setSelectedEndTime(endTime);
     setModalOpen(true);
   }, []);
 
   const openEditEventModal = useCallback((event: EventData) => {
     setEditingEvent(event);
     setSelectedDate(undefined);
+    setSelectedStartTime(undefined);
+    setSelectedEndTime(undefined);
     setModalOpen(true);
   }, []);
+
+  // Calculate time from mouse position within the grid
+  const getTimeFromMouseEvent = useCallback((e: React.MouseEvent | MouseEvent): { dayIndex: number; time: number } | null => {
+    if (!gridRef.current) return null;
+
+    const gridRect = gridRef.current.getBoundingClientRect();
+    const timeColumnWidth = 80; // 80px for time labels
+    const gap = 8; // gap-2 = 0.5rem = 8px
+
+    // Calculate x position relative to the day columns (excluding time column)
+    const x = e.clientX - gridRect.left - timeColumnWidth - gap;
+    const y = e.clientY - gridRect.top;
+
+    // Calculate available width for day columns
+    const dayColumnsWidth = gridRect.width - timeColumnWidth - gap;
+    const dayWidth = dayColumnsWidth / 7;
+
+    // Determine which day column
+    const dayIndex = Math.floor(x / dayWidth);
+    if (dayIndex < 0 || dayIndex > 6) return null;
+
+    // Calculate time based on y position
+    const gridHeight = gridRect.height;
+    const totalHours = endHour - startHour;
+    const hourHeight = gridHeight / totalHours;
+
+    const hoursFromTop = y / hourHeight;
+    const time = startHour + hoursFromTop;
+
+    // Clamp to valid range
+    const clampedTime = Math.max(startHour, Math.min(endHour, time));
+    const snappedTime = snapToTimeIncrement(clampedTime);
+
+    return { dayIndex, time: snappedTime };
+  }, [startHour, endHour]);
+
+  // Reset all drag state
+  const resetDragState = useCallback(() => {
+    isDraggingRef.current = false;
+    dragStartRef.current = null;
+    dragModeRef.current = null;
+    eventDragInfoRef.current = null;
+    mouseStartPosRef.current = null;
+    hasDragStartedRef.current = false;
+    setIsDragging(false);
+    setDragMode(null);
+    setDragStart(null);
+    setDragCurrent(null);
+    setEventDragInfo(null);
+  }, []);
+
+  // Handle event resize (from top or bottom edge)
+  const handleEventResizeStart = useCallback((e: React.MouseEvent, event: EventData, edge: 'top' | 'bottom') => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const startDate = new Date(event.start);
+    const endDate = new Date(event.end);
+    const dayOfWeek = startDate.getDay();
+    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+
+    const info = getTimeFromMouseEvent(e);
+    if (!info) return;
+
+    // Set refs synchronously
+    isDraggingRef.current = true;
+    dragModeRef.current = edge === 'top' ? 'resize-top' : 'resize-bottom';
+    dragStartRef.current = info;
+    eventDragInfoRef.current = {
+      event,
+      originalStart: startDate.getHours() + startDate.getMinutes() / 60,
+      originalEnd: endDate.getHours() + endDate.getMinutes() / 60,
+      dayIndex
+    };
+    mouseStartPosRef.current = { x: e.clientX, y: e.clientY };
+    hasDragStartedRef.current = true; // Skip threshold for resize
+
+    setIsDragging(true);
+    setDragMode(edge === 'top' ? 'resize-top' : 'resize-bottom');
+    setDragStart(info);
+    setDragCurrent(info);
+    setEventDragInfo({
+      event,
+      originalStart: startDate.getHours() + startDate.getMinutes() / 60,
+      originalEnd: endDate.getHours() + endDate.getMinutes() / 60,
+      dayIndex
+    });
+  }, [getTimeFromMouseEvent]);
+
+  // Handle event move start (from clicking on event body)
+  const handleEventMoveStart = useCallback((e: React.MouseEvent, event: EventData) => {
+    // Don't start move if clicking on resize handles
+    if ((e.target as HTMLElement).closest('[data-resize-handle]')) return;
+
+    e.stopPropagation();
+    e.preventDefault();
+
+    const startDate = new Date(event.start);
+    const endDate = new Date(event.end);
+    const dayOfWeek = startDate.getDay();
+    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+
+    const info = getTimeFromMouseEvent(e);
+    if (!info) return;
+
+    // Set refs synchronously
+    isDraggingRef.current = true;
+    dragModeRef.current = 'move';
+    dragStartRef.current = info;
+    eventDragInfoRef.current = {
+      event,
+      originalStart: startDate.getHours() + startDate.getMinutes() / 60,
+      originalEnd: endDate.getHours() + endDate.getMinutes() / 60,
+      dayIndex
+    };
+    mouseStartPosRef.current = { x: e.clientX, y: e.clientY };
+    hasDragStartedRef.current = false; // Will start after threshold
+
+    setDragMode('move');
+    setDragStart(info);
+    setEventDragInfo({
+      event,
+      originalStart: startDate.getHours() + startDate.getMinutes() / 60,
+      originalEnd: endDate.getHours() + endDate.getMinutes() / 60,
+      dayIndex
+    });
+  }, [getTimeFromMouseEvent]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Prevent drag when clicking on events (they have their own handlers)
+    if ((e.target as HTMLElement).closest('[data-event]')) return;
+
+    const info = getTimeFromMouseEvent(e);
+    if (!info) return;
+
+    // Set refs synchronously for immediate access
+    isDraggingRef.current = true;
+    dragModeRef.current = 'create';
+    dragStartRef.current = info;
+    mouseStartPosRef.current = { x: e.clientX, y: e.clientY };
+    hasDragStartedRef.current = false; // Will start after threshold
+
+    setDragMode('create');
+    setDragStart(info);
+    setDragCurrent(info);
+    e.preventDefault();
+  }, [getTimeFromMouseEvent]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent | MouseEvent) => {
+    if (!isDraggingRef.current) return;
+
+    // Check if we've passed the drag threshold
+    if (!hasDragStartedRef.current && mouseStartPosRef.current) {
+      const dx = e.clientX - mouseStartPosRef.current.x;
+      const dy = e.clientY - mouseStartPosRef.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < DRAG_THRESHOLD_PX) {
+        return; // Haven't moved enough yet
+      }
+      hasDragStartedRef.current = true;
+      setIsDragging(true);
+    }
+
+    const info = getTimeFromMouseEvent(e);
+    if (!info) return;
+
+    const mode = dragModeRef.current;
+
+    if (mode === 'create') {
+      // For create mode, only allow dragging within the same day
+      if (dragStartRef.current && info.dayIndex === dragStartRef.current.dayIndex) {
+        setDragCurrent(info);
+      }
+    } else if (mode === 'move' && eventDragInfoRef.current) {
+      // For move mode, allow moving to different days
+      setDragCurrent(info);
+    } else if ((mode === 'resize-top' || mode === 'resize-bottom') && eventDragInfoRef.current) {
+      // For resize, keep the same day
+      if (info.dayIndex === eventDragInfoRef.current.dayIndex) {
+        setDragCurrent(info);
+      }
+    }
+  }, [getTimeFromMouseEvent]);
+
+  const handleMouseUp = useCallback(async () => {
+    // Check if we actually dragged (passed threshold)
+    if (!isDraggingRef.current || !hasDragStartedRef.current) {
+      // If we didn't pass threshold, treat as click for events
+      if (dragModeRef.current === 'move' && eventDragInfoRef.current) {
+        openEditEventModal(eventDragInfoRef.current.event);
+      }
+      resetDragState();
+      return;
+    }
+
+    const mode = dragModeRef.current;
+    const dragStartInfo = dragStartRef.current;
+    const dragCurrentInfo = dragCurrent || dragStartInfo;
+
+    if (!dragStartInfo || !dragCurrentInfo) {
+      resetDragState();
+      return;
+    }
+
+    if (mode === 'create') {
+      // Create new event
+      const dayIndex = dragStartInfo.dayIndex;
+      const eventStartTime = Math.min(dragStartInfo.time, dragCurrentInfo.time);
+      let eventEndTime = Math.max(dragStartInfo.time, dragCurrentInfo.time);
+
+      // Ensure minimum 15-minute duration
+      if (eventEndTime - eventStartTime < 0.25) {
+        eventEndTime = eventStartTime + 0.25;
+      }
+
+      const date = new Date(currentWeekStart);
+      date.setDate(currentWeekStart.getDate() + dayIndex);
+
+      openNewEventModal(date, hoursToTimeString(eventStartTime), hoursToTimeString(eventEndTime));
+    } else if (mode === 'move' && eventDragInfoRef.current) {
+      // Move existing event
+      const eventInfo = eventDragInfoRef.current;
+      const timeDiff = dragCurrentInfo.time - dragStartInfo.time;
+      const dayDiff = dragCurrentInfo.dayIndex - eventInfo.dayIndex;
+
+      const newStartTime = eventInfo.originalStart + timeDiff;
+      const newEndTime = eventInfo.originalEnd + timeDiff;
+
+      // Calculate new date
+      const originalDate = new Date(eventInfo.event.start);
+      const newDate = new Date(currentWeekStart);
+      newDate.setDate(currentWeekStart.getDate() + dragCurrentInfo.dayIndex);
+
+      const newStart = new Date(newDate);
+      newStart.setHours(Math.floor(newStartTime), Math.round((newStartTime % 1) * 60), 0, 0);
+
+      const newEnd = new Date(newDate);
+      newEnd.setHours(Math.floor(newEndTime), Math.round((newEndTime % 1) * 60), 0, 0);
+
+      await updateEvent({
+        id: eventInfo.event._id,
+        title: eventInfo.event.title,
+        description: eventInfo.event.description,
+        start: newStart.getTime(),
+        end: newEnd.getTime(),
+        location: eventInfo.event.location
+      });
+    } else if ((mode === 'resize-top' || mode === 'resize-bottom') && eventDragInfoRef.current) {
+      // Resize existing event
+      const eventInfo = eventDragInfoRef.current;
+      let newStartTime = eventInfo.originalStart;
+      let newEndTime = eventInfo.originalEnd;
+
+      if (mode === 'resize-top') {
+        newStartTime = Math.min(dragCurrentInfo.time, eventInfo.originalEnd - 0.25);
+      } else {
+        newEndTime = Math.max(dragCurrentInfo.time, eventInfo.originalStart + 0.25);
+      }
+
+      const originalDate = new Date(eventInfo.event.start);
+      const newStart = new Date(originalDate);
+      newStart.setHours(Math.floor(newStartTime), Math.round((newStartTime % 1) * 60), 0, 0);
+
+      const newEnd = new Date(originalDate);
+      newEnd.setHours(Math.floor(newEndTime), Math.round((newEndTime % 1) * 60), 0, 0);
+
+      await updateEvent({
+        id: eventInfo.event._id,
+        title: eventInfo.event.title,
+        description: eventInfo.event.description,
+        start: newStart.getTime(),
+        end: newEnd.getTime(),
+        location: eventInfo.event.location
+      });
+    }
+
+    resetDragState();
+  }, [dragCurrent, currentWeekStart, openNewEventModal, openEditEventModal, resetDragState, updateEvent]);
+
+  // Handle escape key to cancel drag
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isDraggingRef.current) {
+        resetDragState();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [resetDragState]);
+
+  // Handle mouse up outside the grid
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDraggingRef.current) {
+        handleMouseUp();
+      }
+    };
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (isDraggingRef.current) {
+        handleMouseMove(e);
+      }
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+    };
+  }, [handleMouseUp, handleMouseMove]);
+
+  // Calculate drag preview position for all drag modes
+  const dragPreview = useMemo(() => {
+    if (!isDragging || !dragStart || !dragCurrent) return null;
+
+    if (dragMode === 'create') {
+      const previewStartTime = Math.min(dragStart.time, dragCurrent.time);
+      const previewEndTime = Math.max(dragStart.time, dragCurrent.time);
+
+      const top = ((previewStartTime - startHour) / (endHour - startHour)) * 100;
+      const height = ((previewEndTime - previewStartTime) / (endHour - startHour)) * 100;
+
+      return {
+        type: 'create' as const,
+        dayIndex: dragStart.dayIndex,
+        top: Math.max(0, top),
+        height: Math.max(height, 2),
+        startTime: hoursToTimeString(previewStartTime),
+        endTime: hoursToTimeString(previewEndTime)
+      };
+    } else if (dragMode === 'move' && eventDragInfo) {
+      const timeDiff = dragCurrent.time - dragStart.time;
+      const newStartTime = eventDragInfo.originalStart + timeDiff;
+      const newEndTime = eventDragInfo.originalEnd + timeDiff;
+
+      const top = ((newStartTime - startHour) / (endHour - startHour)) * 100;
+      const height = ((newEndTime - newStartTime) / (endHour - startHour)) * 100;
+
+      return {
+        type: 'move' as const,
+        dayIndex: dragCurrent.dayIndex,
+        originalDayIndex: eventDragInfo.dayIndex,
+        eventId: eventDragInfo.event._id,
+        top: Math.max(0, top),
+        height: Math.max(height, 2),
+        startTime: hoursToTimeString(newStartTime),
+        endTime: hoursToTimeString(newEndTime)
+      };
+    } else if ((dragMode === 'resize-top' || dragMode === 'resize-bottom') && eventDragInfo) {
+      let newStartTime = eventDragInfo.originalStart;
+      let newEndTime = eventDragInfo.originalEnd;
+
+      if (dragMode === 'resize-top') {
+        newStartTime = Math.min(dragCurrent.time, eventDragInfo.originalEnd - 0.25);
+      } else {
+        newEndTime = Math.max(dragCurrent.time, eventDragInfo.originalStart + 0.25);
+      }
+
+      const top = ((newStartTime - startHour) / (endHour - startHour)) * 100;
+      const height = ((newEndTime - newStartTime) / (endHour - startHour)) * 100;
+
+      return {
+        type: 'resize' as const,
+        dayIndex: eventDragInfo.dayIndex,
+        eventId: eventDragInfo.event._id,
+        top: Math.max(0, top),
+        height: Math.max(height, 2),
+        startTime: hoursToTimeString(newStartTime),
+        endTime: hoursToTimeString(newEndTime)
+      };
+    }
+
+    return null;
+  }, [isDragging, dragMode, dragStart, dragCurrent, eventDragInfo, startHour, endHour]);
 
   const isCurrentWeek = useMemo(() => {
     const today = getWeekStart(new Date());
@@ -556,7 +992,11 @@ export default function CalendarPage() {
           </div>
 
           {/* Time grid */}
-          <div className="relative mt-4">
+          <div
+            ref={gridRef}
+            className={`relative mt-4 select-none ${isDragging ? 'cursor-grabbing' : ''}`}
+            onMouseDown={handleMouseDown}
+          >
             <div className="grid grid-cols-[80px_repeat(7,minmax(0,1fr))] gap-2">
               {timeSlots.map((hour) => (
                 <div key={hour} className="contents">
@@ -566,8 +1006,7 @@ export default function CalendarPage() {
                   {days.map((day) => (
                     <div
                       key={`${day.label}-${hour}`}
-                      onClick={() => openNewEventModal(day.fullDate)}
-                      className="h-16 cursor-pointer border-t border-slate-100 hover:bg-indigo-50/50"
+                      className={`h-16 border-t border-slate-100 hover:bg-indigo-50/50 ${isDragging ? '' : 'cursor-crosshair'}`}
                     />
                   ))}
                 </div>
@@ -581,31 +1020,73 @@ export default function CalendarPage() {
                 <div key={day.label} className="relative">
                   {eventPositions
                     .filter((e) => e.dayIndex === dayIdx)
-                    .map((event) => (
-                      <div
-                        key={event._id}
-                        onClick={() => openEditEventModal(event)}
-                        className="pointer-events-auto absolute left-1 right-1 cursor-pointer overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 p-2 shadow-sm transition hover:bg-indigo-200"
-                        style={{
-                          top: `${event.top}%`,
-                          height: `${Math.max(event.height, 8)}%`
-                        }}
-                      >
-                        <p className="truncate text-xs font-semibold text-indigo-900">
-                          {event.title}
-                        </p>
-                        {event.height > 12 && (
-                          <p className="truncate text-xs text-indigo-700">
-                            {event.startTime}
-                          </p>
-                        )}
-                        {event.height > 20 && event.location && (
-                          <p className="truncate text-xs text-indigo-600">
-                            {event.location}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                    .map((event) => {
+                      const isBeingDragged = isDragging && eventDragInfo?.event._id === event._id;
+                      return (
+                        <div
+                          key={event._id}
+                          data-event="true"
+                          onMouseDown={(e) => handleEventMoveStart(e, event)}
+                          className={`group pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 shadow-sm transition ${
+                            isBeingDragged ? 'opacity-50' : 'hover:bg-indigo-200'
+                          } ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+                          style={{
+                            top: `${event.top}%`,
+                            height: `${Math.max(event.height, 8)}%`
+                          }}
+                        >
+                          {/* Top resize handle */}
+                          <div
+                            data-resize-handle="true"
+                            onMouseDown={(e) => handleEventResizeStart(e, event, 'top')}
+                            className="absolute inset-x-0 top-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 hover:bg-indigo-300/50"
+                          />
+
+                          {/* Event content */}
+                          <div className="p-2 pt-2">
+                            <p className="truncate text-xs font-semibold text-indigo-900">
+                              {event.title}
+                            </p>
+                            {event.height > 12 && (
+                              <p className="truncate text-xs text-indigo-700">
+                                {event.startTime}
+                              </p>
+                            )}
+                            {event.height > 20 && event.location && (
+                              <p className="truncate text-xs text-indigo-600">
+                                {event.location}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Bottom resize handle */}
+                          <div
+                            data-resize-handle="true"
+                            onMouseDown={(e) => handleEventResizeStart(e, event, 'bottom')}
+                            className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 hover:bg-indigo-300/50"
+                          />
+                        </div>
+                      );
+                    })}
+
+                  {/* Drag preview overlay */}
+                  {dragPreview && dragPreview.dayIndex === dayIdx && (
+                    <div
+                      className={`pointer-events-none absolute left-1 right-1 rounded-lg border-2 border-dashed ${
+                        dragPreview.type === 'create'
+                          ? 'border-indigo-400 bg-indigo-100/70'
+                          : 'border-indigo-500 bg-indigo-200/80'
+                      }`}
+                      style={{
+                        top: `${dragPreview.top}%`,
+                        height: `${Math.max(dragPreview.height, 2)}%`
+                      }}
+                    >
+                      <p className="truncate p-1 text-xs font-medium text-indigo-700">
+                        {dragPreview.startTime} - {dragPreview.endTime}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -666,11 +1147,15 @@ export default function CalendarPage() {
           setModalOpen(false);
           setEditingEvent(null);
           setSelectedDate(undefined);
+          setSelectedStartTime(undefined);
+          setSelectedEndTime(undefined);
         }}
         onSave={handleSaveEvent}
         onDelete={editingEvent ? handleDeleteEvent : undefined}
         initialData={editingEvent || undefined}
         selectedDate={selectedDate}
+        selectedStartTime={selectedStartTime}
+        selectedEndTime={selectedEndTime}
       />
     </main>
   );
