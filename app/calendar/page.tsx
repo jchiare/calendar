@@ -26,10 +26,16 @@ type EventFormData = {
   location: string;
 };
 
+type DragInfo = {
+  dayIndex: number;
+  time: number; // time in hours (e.g., 9.25 for 9:15 AM)
+};
+
 const DEFAULT_START_HOUR = 7;
 const DEFAULT_END_HOUR = 19;
 const EXTENDED_START_HOUR = 0;
 const EXTENDED_END_HOUR = 24;
+const TIME_INCREMENT_MINUTES = 15; // 15-minute buckets
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
@@ -59,13 +65,28 @@ function parseTimeToHours(time: string): number {
   return hours + minutes / 60;
 }
 
+function snapToTimeIncrement(hours: number): number {
+  // Snap to nearest 15-minute increment
+  const totalMinutes = hours * 60;
+  const snappedMinutes = Math.round(totalMinutes / TIME_INCREMENT_MINUTES) * TIME_INCREMENT_MINUTES;
+  return snappedMinutes / 60;
+}
+
+function hoursToTimeString(hours: number): string {
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 function EventModal({
   isOpen,
   onClose,
   onSave,
   onDelete,
   initialData,
-  selectedDate
+  selectedDate,
+  selectedStartTime,
+  selectedEndTime
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -73,6 +94,8 @@ function EventModal({
   onDelete?: () => void;
   initialData?: EventData;
   selectedDate?: Date;
+  selectedStartTime?: string;
+  selectedEndTime?: string;
 }) {
   const [formData, setFormData] = useState<EventFormData>({
     title: "",
@@ -100,12 +123,12 @@ function EventModal({
         title: "",
         description: "",
         date: selectedDate.toISOString().split("T")[0],
-        startTime: "09:00",
-        endTime: "10:00",
+        startTime: selectedStartTime || "09:00",
+        endTime: selectedEndTime || "10:00",
         location: ""
       });
     }
-  }, [initialData, selectedDate, isOpen]);
+  }, [initialData, selectedDate, selectedStartTime, selectedEndTime, isOpen]);
 
   if (!isOpen) return null;
 
@@ -258,7 +281,18 @@ export default function CalendarPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EventData | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
+  const [selectedStartTime, setSelectedStartTime] = useState<string | undefined>();
+  const [selectedEndTime, setSelectedEndTime] = useState<string | undefined>();
   const seededRef = useRef(false);
+
+  // Drag to create state
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<DragInfo | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<DragInfo | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  // Use refs for synchronous access during mouse events
+  const dragStartRef = useRef<DragInfo | null>(null);
+  const isDraggingRef = useRef(false);
 
   const events = useQuery(api.events.getWeekEvents, {
     weekStart: currentWeekStart.getTime()
@@ -416,17 +450,153 @@ export default function CalendarPage() {
     }
   }, [editingEvent, deleteEvent]);
 
-  const openNewEventModal = useCallback((date?: Date) => {
+  const openNewEventModal = useCallback((date?: Date, startTime?: string, endTime?: string) => {
     setEditingEvent(null);
     setSelectedDate(date);
+    setSelectedStartTime(startTime);
+    setSelectedEndTime(endTime);
     setModalOpen(true);
   }, []);
 
   const openEditEventModal = useCallback((event: EventData) => {
     setEditingEvent(event);
     setSelectedDate(undefined);
+    setSelectedStartTime(undefined);
+    setSelectedEndTime(undefined);
     setModalOpen(true);
   }, []);
+
+  // Calculate time from mouse position within the grid
+  const getTimeFromMouseEvent = useCallback((e: React.MouseEvent | MouseEvent): { dayIndex: number; time: number } | null => {
+    if (!gridRef.current) return null;
+
+    const gridRect = gridRef.current.getBoundingClientRect();
+    const timeColumnWidth = 80; // 80px for time labels
+    const gap = 8; // gap-2 = 0.5rem = 8px
+
+    // Calculate x position relative to the day columns (excluding time column)
+    const x = e.clientX - gridRect.left - timeColumnWidth - gap;
+    const y = e.clientY - gridRect.top;
+
+    // Calculate available width for day columns
+    const dayColumnsWidth = gridRect.width - timeColumnWidth - gap;
+    const dayWidth = dayColumnsWidth / 7;
+
+    // Determine which day column
+    const dayIndex = Math.floor(x / dayWidth);
+    if (dayIndex < 0 || dayIndex > 6) return null;
+
+    // Calculate time based on y position
+    const gridHeight = gridRect.height;
+    const totalHours = endHour - startHour;
+    const hourHeight = gridHeight / totalHours;
+
+    const hoursFromTop = y / hourHeight;
+    const time = startHour + hoursFromTop;
+
+    // Clamp to valid range
+    const clampedTime = Math.max(startHour, Math.min(endHour, time));
+    const snappedTime = snapToTimeIncrement(clampedTime);
+
+    return { dayIndex, time: snappedTime };
+  }, [startHour, endHour]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Prevent drag when clicking on events
+    if ((e.target as HTMLElement).closest('[data-event]')) return;
+
+    const info = getTimeFromMouseEvent(e);
+    if (!info) return;
+
+    // Set refs synchronously for immediate access
+    isDraggingRef.current = true;
+    dragStartRef.current = info;
+
+    setIsDragging(true);
+    setDragStart(info);
+    setDragCurrent(info);
+    e.preventDefault();
+  }, [getTimeFromMouseEvent]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDraggingRef.current) return;
+
+    const info = getTimeFromMouseEvent(e);
+    if (info && dragStartRef.current && info.dayIndex === dragStartRef.current.dayIndex) {
+      setDragCurrent(info);
+    }
+  }, [getTimeFromMouseEvent]);
+
+  const handleMouseUp = useCallback(() => {
+    // Use refs for synchronous access
+    if (!isDraggingRef.current || !dragStartRef.current) {
+      isDraggingRef.current = false;
+      dragStartRef.current = null;
+      setIsDragging(false);
+      setDragStart(null);
+      setDragCurrent(null);
+      return;
+    }
+
+    // Get current drag position (use state or ref)
+    const dragStartInfo = dragStartRef.current;
+    const dragCurrentInfo = dragCurrent || dragStartInfo;
+
+    // Get the day and time range
+    const dayIndex = dragStartInfo.dayIndex;
+    const startTime = Math.min(dragStartInfo.time, dragCurrentInfo.time);
+    let endTime = Math.max(dragStartInfo.time, dragCurrentInfo.time);
+
+    // Ensure minimum 15-minute duration
+    if (endTime - startTime < 0.25) {
+      endTime = startTime + 0.25;
+    }
+
+    // Get the date for this day
+    const date = new Date(currentWeekStart);
+    date.setDate(currentWeekStart.getDate() + dayIndex);
+
+    // Open modal with pre-populated times
+    openNewEventModal(date, hoursToTimeString(startTime), hoursToTimeString(endTime));
+
+    // Reset drag state
+    isDraggingRef.current = false;
+    dragStartRef.current = null;
+    setIsDragging(false);
+    setDragStart(null);
+    setDragCurrent(null);
+  }, [dragCurrent, currentWeekStart, openNewEventModal]);
+
+  // Handle mouse up outside the grid
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDragging) {
+        handleMouseUp();
+      }
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [isDragging, handleMouseUp]);
+
+  // Calculate drag preview position
+  const dragPreview = useMemo(() => {
+    if (!isDragging || !dragStart || !dragCurrent) return null;
+
+    const startTime = Math.min(dragStart.time, dragCurrent.time);
+    const endTime = Math.max(dragStart.time, dragCurrent.time);
+
+    const top = ((startTime - startHour) / (endHour - startHour)) * 100;
+    const height = ((endTime - startTime) / (endHour - startHour)) * 100;
+
+    return {
+      dayIndex: dragStart.dayIndex,
+      top: Math.max(0, top),
+      height: Math.max(height, 2), // Minimum visible height
+      startTime: hoursToTimeString(startTime),
+      endTime: hoursToTimeString(endTime)
+    };
+  }, [isDragging, dragStart, dragCurrent, startHour, endHour]);
 
   const isCurrentWeek = useMemo(() => {
     const today = getWeekStart(new Date());
@@ -556,7 +726,13 @@ export default function CalendarPage() {
           </div>
 
           {/* Time grid */}
-          <div className="relative mt-4">
+          <div
+            ref={gridRef}
+            className="relative mt-4 select-none"
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+          >
             <div className="grid grid-cols-[80px_repeat(7,minmax(0,1fr))] gap-2">
               {timeSlots.map((hour) => (
                 <div key={hour} className="contents">
@@ -566,8 +742,7 @@ export default function CalendarPage() {
                   {days.map((day) => (
                     <div
                       key={`${day.label}-${hour}`}
-                      onClick={() => openNewEventModal(day.fullDate)}
-                      className="h-16 cursor-pointer border-t border-slate-100 hover:bg-indigo-50/50"
+                      className="h-16 cursor-crosshair border-t border-slate-100 hover:bg-indigo-50/50"
                     />
                   ))}
                 </div>
@@ -584,6 +759,7 @@ export default function CalendarPage() {
                     .map((event) => (
                       <div
                         key={event._id}
+                        data-event="true"
                         onClick={() => openEditEventModal(event)}
                         className="pointer-events-auto absolute left-1 right-1 cursor-pointer overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 p-2 shadow-sm transition hover:bg-indigo-200"
                         style={{
@@ -606,6 +782,21 @@ export default function CalendarPage() {
                         )}
                       </div>
                     ))}
+
+                  {/* Drag preview overlay */}
+                  {dragPreview && dragPreview.dayIndex === dayIdx && (
+                    <div
+                      className="pointer-events-none absolute left-1 right-1 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-100/70"
+                      style={{
+                        top: `${dragPreview.top}%`,
+                        height: `${Math.max(dragPreview.height, 2)}%`
+                      }}
+                    >
+                      <p className="truncate p-1 text-xs font-medium text-indigo-700">
+                        {dragPreview.startTime} - {dragPreview.endTime}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -666,11 +857,15 @@ export default function CalendarPage() {
           setModalOpen(false);
           setEditingEvent(null);
           setSelectedDate(undefined);
+          setSelectedStartTime(undefined);
+          setSelectedEndTime(undefined);
         }}
         onSave={handleSaveEvent}
         onDelete={editingEvent ? handleDeleteEvent : undefined}
         initialData={editingEvent || undefined}
         selectedDate={selectedDate}
+        selectedStartTime={selectedStartTime}
+        selectedEndTime={selectedEndTime}
       />
     </main>
   );
