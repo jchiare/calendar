@@ -1,5 +1,9 @@
-export const api = {
+import { anyApi, type FunctionReference } from "convex/server";
+
+type Api = {
   notes: {
-    getWelcome: "notes:getWelcome"
-  }
-} as const;
+    getWelcome: FunctionReference<"query", "public", Record<string, never>, { message: string }>;
+  };
+};
+
+export const api: Api = anyApi as unknown as Api;

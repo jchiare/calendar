@@ -1,6 +1,6 @@
-import { query } from "convex/server";
+import { queryGeneric } from "convex/server";
 
-export const getWelcome = query({
+export const getWelcome = queryGeneric({
   args: {},
   handler: async () => {
     return {
