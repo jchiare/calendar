@@ -178,6 +178,13 @@ export const seedDemo = mutationGeneric({
         description: "Daily sync with the team"
       },
       {
+        title: "Grocery pickup",
+        start: buildDate(0, 17, 0),
+        end: buildDate(0, 17, 30),
+        location: "Whole Foods",
+        description: "Order #4521"
+      },
+      {
         title: "Lunch with grandparents",
         start: buildDate(1, 12, 0),
         end: buildDate(1, 13, 30),
@@ -185,11 +192,25 @@ export const seedDemo = mutationGeneric({
         description: "Monthly family lunch"
       },
       {
+        title: "Piano lesson",
+        start: buildDate(1, 16, 0),
+        end: buildDate(1, 17, 0),
+        location: "Music Academy",
+        description: "Jamie's weekly lesson"
+      },
+      {
         title: "Dentist appointment",
-        start: buildDate(2, 15, 0),
-        end: buildDate(2, 15, 45),
+        start: buildDate(2, 10, 0),
+        end: buildDate(2, 10, 45),
         location: "Oak Street Dental",
         description: "Regular checkup for Jamie"
+      },
+      {
+        title: "Book club meeting",
+        start: buildDate(2, 14, 0),
+        end: buildDate(2, 15, 30),
+        location: "Public Library",
+        description: "Discussing 'The Midnight Library'"
       },
       {
         title: "Soccer practice",
@@ -199,18 +220,18 @@ export const seedDemo = mutationGeneric({
         description: "Bring water and snacks"
       },
       {
-        title: "Family dinner",
-        start: buildDate(4, 18, 0),
-        end: buildDate(4, 19, 30),
-        location: "Home",
-        description: "Pizza night!"
+        title: "Parent-teacher conference",
+        start: buildDate(4, 15, 0),
+        end: buildDate(4, 15, 45),
+        location: "Sunrise Elementary",
+        description: "Meeting with Ms. Thompson"
       },
       {
-        title: "Movie night",
-        start: buildDate(5, 20, 0),
-        end: buildDate(5, 22, 30),
-        location: "Home",
-        description: "Family movie selection"
+        title: "Movie matinee",
+        start: buildDate(5, 14, 0),
+        end: buildDate(5, 16, 30),
+        location: "AMC Theater",
+        description: "Family movie outing"
       },
       {
         title: "Farmers market",
@@ -218,6 +239,13 @@ export const seedDemo = mutationGeneric({
         end: buildDate(6, 11, 0),
         location: "Downtown Market",
         description: "Weekly groceries"
+      },
+      {
+        title: "Brunch with friends",
+        start: buildDate(6, 11, 30),
+        end: buildDate(6, 13, 0),
+        location: "The Breakfast Club",
+        description: "Monthly catch-up"
       }
     ];
 
