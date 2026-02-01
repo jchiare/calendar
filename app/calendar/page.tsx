@@ -299,6 +299,17 @@ export default function CalendarPage() {
   const [selectedEndTime, setSelectedEndTime] = useState<string | undefined>();
   const seededRef = useRef(false);
 
+  // Current time for the time indicator
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+
+  // Update current time every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Drag state for create, move, and resize operations
   const [isDragging, setIsDragging] = useState(false);
   const [dragMode, setDragMode] = useState<DragMode | null>(null);
@@ -905,7 +916,7 @@ export default function CalendarPage() {
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigateWeek(-1)}
-              className="rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
               aria-label="Previous week"
             >
               <svg
@@ -927,7 +938,7 @@ export default function CalendarPage() {
             </span>
             <button
               onClick={() => navigateWeek(1)}
-              className="rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
               aria-label="Next week"
             >
               <svg
@@ -948,13 +959,13 @@ export default function CalendarPage() {
           <button
             onClick={goToToday}
             disabled={isCurrentWeek}
-            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="cursor-pointer rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50"
           >
             Today
           </button>
           <button
             onClick={() => openNewEventModal()}
-            className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            className="cursor-pointer rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
           >
             New event
           </button>
@@ -1087,6 +1098,22 @@ export default function CalendarPage() {
                       </p>
                     </div>
                   )}
+
+                  {/* Current time indicator */}
+                  {day.fullDate.toDateString() === currentTime.toDateString() && (() => {
+                    const currentHour = currentTime.getHours() + currentTime.getMinutes() / 60;
+                    if (currentHour < startHour || currentHour > endHour) return null;
+                    const topPercent = ((currentHour - startHour) / (endHour - startHour)) * 100;
+                    return (
+                      <div
+                        className="pointer-events-none absolute left-0 right-0 z-20 flex items-center"
+                        style={{ top: `${topPercent}%` }}
+                      >
+                        <div className="h-3 w-3 -ml-1.5 rounded-full bg-red-500" />
+                        <div className="h-0.5 flex-1 bg-red-500" />
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -1102,40 +1129,91 @@ export default function CalendarPage() {
 
         <aside className="space-y-6">
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Family members
-            </h2>
-            <ul className="mt-4 space-y-3 text-sm text-slate-600">
-              {["Alex", "Jamie", "Taylor", "Morgan"].map((member) => (
-                <li key={member} className="flex items-center justify-between">
-                  <span>{member}</span>
-                  <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-700">
-                    Available
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100">
+                <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Today
+              </h2>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+            </p>
+            {(() => {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const tomorrow = new Date(today);
+              tomorrow.setDate(tomorrow.getDate() + 1);
+
+              const todayEvents = events?.filter((event) => {
+                const eventDate = new Date(event.start);
+                return eventDate >= today && eventDate < tomorrow;
+              }).sort((a, b) => a.start - b.start) || [];
+
+              if (todayEvents.length === 0) {
+                return (
+                  <div className="mt-4 rounded-xl border border-dashed border-slate-200 p-4 text-center">
+                    <p className="text-sm text-slate-500">No events today</p>
+                    <button
+                      onClick={() => openNewEventModal(new Date())}
+                      className="cursor-pointer mt-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                    >
+                      + Add an event
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <ul className="mt-4 space-y-3">
+                  {todayEvents.map((event) => {
+                    const startDate = new Date(event.start);
+                    const endDate = new Date(event.end);
+                    return (
+                      <li
+                        key={event._id}
+                        onClick={() => openEditEventModal(event)}
+                        className="group cursor-pointer rounded-xl border border-slate-100 p-3 transition-colors hover:border-indigo-200 hover:bg-indigo-50/50"
+                      >
+                        <p className="font-medium text-slate-900 group-hover:text-indigo-900">
+                          {event.title}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {formatTime(startDate)} – {formatTime(endDate)}
+                        </p>
+                        {event.location && (
+                          <p className="mt-1 flex items-center gap-1 text-xs text-slate-400">
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            {event.location}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              );
+            })()}
           </div>
           <div className="rounded-3xl border border-indigo-100 bg-indigo-600 p-6 text-white">
-            <h2 className="text-lg font-semibold">Next up</h2>
+            <h2 className="text-lg font-semibold">This week</h2>
             <p className="mt-2 text-sm text-indigo-100">
               {events && events.length > 0
-                ? `You have ${events.length} event${events.length > 1 ? "s" : ""} this week.`
-                : "No events scheduled this week."}
+                ? `You have ${events.length} event${events.length > 1 ? "s" : ""} scheduled.`
+                : "No events scheduled."}
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4">
               <button
                 onClick={() => openNewEventModal()}
-                className="rounded-full bg-white/20 px-3 py-2 text-xs font-semibold hover:bg-white/30"
+                className="cursor-pointer rounded-full bg-white/20 px-4 py-2 text-sm font-semibold transition-colors hover:bg-white/30"
               >
-                Add event
+                + New event
               </button>
-              <Link
-                className="rounded-full bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20"
-                href="/admin"
-              >
-                Review rules
-              </Link>
             </div>
           </div>
         </aside>
