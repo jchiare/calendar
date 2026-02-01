@@ -11,18 +11,9 @@ const navItems = [
 export default function Nav() {
   const pathname = usePathname();
 
-  // Sort nav items so active one appears first
-  const sortedItems = [...navItems].sort((a, b) => {
-    const aActive = pathname === a.href || pathname.startsWith(a.href + "/");
-    const bActive = pathname === b.href || pathname.startsWith(b.href + "/");
-    if (aActive && !bActive) return -1;
-    if (!aActive && bActive) return 1;
-    return 0;
-  });
-
   return (
     <nav className="flex flex-wrap gap-2 text-sm font-semibold">
-      {sortedItems.map((item) => {
+      {navItems.map((item) => {
         const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
         return (
           <Link
