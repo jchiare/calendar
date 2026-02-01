@@ -916,7 +916,7 @@ export default function CalendarPage() {
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigateWeek(-1)}
-              className="rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
               aria-label="Previous week"
             >
               <svg
@@ -938,7 +938,7 @@ export default function CalendarPage() {
             </span>
             <button
               onClick={() => navigateWeek(1)}
-              className="rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
               aria-label="Next week"
             >
               <svg
@@ -959,13 +959,13 @@ export default function CalendarPage() {
           <button
             onClick={goToToday}
             disabled={isCurrentWeek}
-            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="cursor-pointer rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50"
           >
             Today
           </button>
           <button
             onClick={() => openNewEventModal()}
-            className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            className="cursor-pointer rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
           >
             New event
           </button>
@@ -1159,7 +1159,7 @@ export default function CalendarPage() {
                     <p className="text-sm text-slate-500">No events today</p>
                     <button
                       onClick={() => openNewEventModal(new Date())}
-                      className="mt-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                      className="cursor-pointer mt-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
                     >
                       + Add an event
                     </button>
@@ -1210,7 +1210,7 @@ export default function CalendarPage() {
             <div className="mt-4">
               <button
                 onClick={() => openNewEventModal()}
-                className="rounded-full bg-white/20 px-4 py-2 text-sm font-semibold transition-colors hover:bg-white/30"
+                className="cursor-pointer rounded-full bg-white/20 px-4 py-2 text-sm font-semibold transition-colors hover:bg-white/30"
               >
                 + New event
               </button>
