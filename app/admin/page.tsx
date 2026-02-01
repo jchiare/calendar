@@ -62,10 +62,10 @@ export default function AdminPage() {
             ))}
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">
+            <button className="cursor-pointer rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">
               Update AI rules
             </button>
-            <button className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700">
+            <button className="cursor-pointer rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700">
               Export preferences
             </button>
           </div>
@@ -80,7 +80,7 @@ export default function AdminPage() {
             {aiPrompts.map((prompt) => (
               <button
                 key={prompt}
-                className="w-full rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-left text-xs font-semibold text-indigo-800"
+                className="w-full cursor-pointer rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-left text-xs font-semibold text-indigo-800"
               >
                 {prompt}
               </button>
@@ -97,7 +97,7 @@ export default function AdminPage() {
               placeholder="Ask the assistant to adjust routines or summarize conflicts."
             />
             <div className="mt-3 flex justify-end">
-              <button className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">
+              <button className="cursor-pointer rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">
                 Send to AI
               </button>
             </div>
