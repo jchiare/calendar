@@ -299,6 +299,17 @@ export default function CalendarPage() {
   const [selectedEndTime, setSelectedEndTime] = useState<string | undefined>();
   const seededRef = useRef(false);
 
+  // Current time for the time indicator
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+
+  // Update current time every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Drag state for create, move, and resize operations
   const [isDragging, setIsDragging] = useState(false);
   const [dragMode, setDragMode] = useState<DragMode | null>(null);
@@ -1087,6 +1098,22 @@ export default function CalendarPage() {
                       </p>
                     </div>
                   )}
+
+                  {/* Current time indicator */}
+                  {day.fullDate.toDateString() === currentTime.toDateString() && (() => {
+                    const currentHour = currentTime.getHours() + currentTime.getMinutes() / 60;
+                    if (currentHour < startHour || currentHour > endHour) return null;
+                    const topPercent = ((currentHour - startHour) / (endHour - startHour)) * 100;
+                    return (
+                      <div
+                        className="pointer-events-none absolute left-0 right-0 z-20 flex items-center"
+                        style={{ top: `${topPercent}%` }}
+                      >
+                        <div className="h-3 w-3 -ml-1.5 rounded-full bg-red-500" />
+                        <div className="h-0.5 flex-1 bg-red-500" />
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
