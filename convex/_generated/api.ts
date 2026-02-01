@@ -85,6 +85,22 @@ type Api = {
       { message: string }
     >;
   };
+  ai: {
+    processMessage: FunctionReference<
+      "mutation",
+      "public",
+      { message: string },
+      {
+        success: boolean;
+        message: string;
+        event?: {
+          title: string;
+          start: number;
+          end: number;
+        };
+      }
+    >;
+  };
 };
 
 export const api: Api = anyApi as unknown as Api;
