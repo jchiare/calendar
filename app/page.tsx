@@ -4,6 +4,15 @@ import Link from "next/link";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 
+type EventData = {
+  _id: string;
+  title: string;
+  description?: string;
+  start: number;
+  end: number;
+  location?: string;
+};
+
 const integrations = [
   "Google Calendar",
   "Gmail",
@@ -28,7 +37,7 @@ function formatTime(timestamp: number): string {
 export default function HomePage() {
   const hasConvexUrl = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
   const welcome = useQuery(api.notes.getWelcome);
-  const todayEvents = useQuery(api.events.getTodayEvents);
+  const todayEvents = useQuery(api.events.getTodayEvents) as EventData[] | undefined;
 
   const welcomeMessage = hasConvexUrl
     ? welcome?.message ?? "Connecting to Convex..."
