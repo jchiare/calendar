@@ -328,7 +328,7 @@ export default function CalendarPage() {
 
   const events = useQuery(api.events.getWeekEvents, {
     weekStart: currentWeekStart.getTime()
-  });
+  }) as EventData[] | undefined;
   const seedDemo = useMutation(api.events.seedDemo);
   const createEvent = useMutation(api.events.createEvent);
   const updateEvent = useMutation(api.events.updateEvent);
