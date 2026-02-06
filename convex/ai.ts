@@ -1,13 +1,16 @@
-import { mutationGeneric } from "convex/server";
+"use node";
+
+import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import OpenAI from "openai";
 
 // Parse natural language time expressions
 function parseTime(text: string): { hour: number; minute: number } | null {
-  // Match patterns like "3pm", "3:30pm", "15:00", "3 pm", "3:30 PM"
   const timePatterns = [
-    /(\d{1,2}):(\d{2})\s*(am|pm)/i,  // 3:30pm, 3:30 PM
-    /(\d{1,2})\s*(am|pm)/i,          // 3pm, 3 PM
-    /(\d{1,2}):(\d{2})/,             // 15:00 (24-hour)
+    /(\d{1,2}):(\d{2})\s*(am|pm)/i,
+    /(\d{1,2})\s*(am|pm)/i,
+    /(\d{1,2}):(\d{2})/,
   ];
 
   for (const pattern of timePatterns) {
@@ -58,33 +61,27 @@ function parseDate(text: string): Date {
     }
   }
 
-  // Default to today
   return today;
 }
 
 // Extract event title by removing time-related words
 function extractTitle(text: string): string {
-  // Remove common prefixes
   let title = text
     .replace(/^(add|create|schedule|set up|book|make)\s+/i, '')
     .replace(/^(a|an)\s+/i, '');
 
-  // Remove time expressions
   title = title
     .replace(/\b(at|for|on|from|to)\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\b(tomorrow|today|next\s+\w+day)\b/gi, '')
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '');
 
-  // Clean up common filler words at the start
   title = title
     .replace(/^(meeting\s+to|to)\s+/i, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // If the remaining title is empty or very short, try to extract meaningful content
   if (title.length < 3) {
-    // Try to get something meaningful from the original
     const match = text.match(/(?:to|for)\s+(.+?)(?:\s+at|\s+on|$)/i);
     if (match) {
       title = match[1].trim();
@@ -93,21 +90,19 @@ function extractTitle(text: string): string {
     }
   }
 
-  // Capitalize first letter
   return title.charAt(0).toUpperCase() + title.slice(1);
 }
 
-// Parse a natural language command into structured event data
+// Parse a natural language command using regex (fallback)
 function parseCommand(message: string): {
   action: 'create' | 'unknown';
   title?: string;
   date?: Date;
   startTime?: { hour: number; minute: number };
-  duration?: number; // in minutes
+  duration?: number;
 } {
   const lowerMessage = message.toLowerCase();
 
-  // Check for create/add intent
   const createPatterns = [
     /^(add|create|schedule|set up|book|make)/i,
     /meeting|appointment|event|reminder/i,
@@ -124,95 +119,160 @@ function parseCommand(message: string): {
       action: 'create',
       title,
       date,
-      startTime: time || { hour: 12, minute: 0 }, // Default to noon if no time specified
-      duration: 60, // Default 1 hour duration
+      startTime: time || { hour: 12, minute: 0 },
+      duration: 60,
     };
   }
 
   return { action: 'unknown' };
 }
 
-export const processMessage = mutationGeneric({
+function regexFallback(message: string): {
+  success: boolean;
+  message: string;
+  event?: { title: string; start: number; end: number };
+} {
+  const parsed = parseCommand(message);
+
+  if (parsed.action === 'create' && parsed.title && parsed.date && parsed.startTime) {
+    const startDate = new Date(parsed.date);
+    startDate.setHours(parsed.startTime.hour, parsed.startTime.minute, 0, 0);
+    const start = startDate.getTime();
+
+    const endDate = new Date(startDate);
+    endDate.setMinutes(endDate.getMinutes() + (parsed.duration || 60));
+    const end = endDate.getTime();
+
+    const timeStr = startDate.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+    const dateStr = startDate.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    });
+
+    return {
+      success: true,
+      message: `Created "${parsed.title}" for ${dateStr} at ${timeStr}`,
+      event: { title: parsed.title, start, end },
+    };
+  }
+
+  return {
+    success: false,
+    message: "I didn't understand that command. Try something like:\n• \"Add 3pm meeting to take out trash\"\n• \"Schedule dentist appointment at 2:30pm tomorrow\"\n• \"Create team standup at 9am on Monday\"",
+  };
+}
+
+export const processMessage = action({
   args: {
     message: v.string(),
   },
-  handler: async (ctx: any, args: { message: string }) => {
-    const parsed = parseCommand(args.message);
+  handler: async (ctx, args): Promise<{ success: boolean; message: string; event?: { title: string; start: number; end: number } }> => {
+    const apiKey = process.env.OPENAI_API_KEY;
 
-    if (parsed.action === 'create' && parsed.title && parsed.date && parsed.startTime) {
-      // Build start and end timestamps
-      const startDate = new Date(parsed.date);
-      startDate.setHours(parsed.startTime.hour, parsed.startTime.minute, 0, 0);
-      const start = startDate.getTime();
-
-      const endDate = new Date(startDate);
-      endDate.setMinutes(endDate.getMinutes() + (parsed.duration || 60));
-      const end = endDate.getTime();
-
-      // Get or create a default calendar
-      let calendar = await ctx.db.query("calendars").first();
-
-      if (!calendar) {
-        const now = Date.now();
-        const userId = await ctx.db.insert("users", {
-          name: "Default User",
-          email: "user@example.com",
-          timezone: "America/Los_Angeles",
-          createdAt: now,
+    if (!apiKey) {
+      // Fallback to regex parsing
+      const result = regexFallback(args.message);
+      if (result.success && result.event) {
+        await ctx.runMutation(internal.aiMutations.createEventFromAI, {
+          title: result.event.title,
+          start: result.event.start,
+          end: result.event.end,
         });
-        const workspaceId = await ctx.db.insert("workspaces", {
-          name: "Family HQ",
-          ownerId: userId,
-          plan: "starter",
-          createdAt: now,
-        });
-        const calendarId = await ctx.db.insert("calendars", {
-          workspaceId,
-          provider: "convex",
-          externalId: `family-${workspaceId}`,
-          syncStatus: "ready",
-          name: "Family Calendar",
-          timezone: "America/Los_Angeles",
-        });
-        calendar = await ctx.db.get(calendarId);
       }
+      return result;
+    }
 
-      const now = Date.now();
-      await ctx.db.insert("events", {
-        calendarId: calendar!._id,
-        title: parsed.title,
-        start,
-        end,
-        updatedAt: now,
-        createdAt: now,
-      });
+    try {
+      const openai = new OpenAI({ apiKey });
 
-      // Format the response
-      const timeStr = startDate.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      });
-      const dateStr = startDate.toLocaleDateString('en-US', {
+      const today = new Date();
+      const todayStr = today.toLocaleDateString('en-US', {
         weekday: 'long',
+        year: 'numeric',
         month: 'long',
         day: 'numeric',
       });
 
-      return {
-        success: true,
-        message: `Created "${parsed.title}" for ${dateStr} at ${timeStr}`,
-        event: {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a calendar assistant. Today is ${todayStr}. Extract structured event data from the user's message. Respond ONLY with a JSON object (no markdown, no code fences) with these fields:
+- "action": "create" if the user wants to add/create/schedule an event, otherwise "unknown"
+- "title": the event title (string)
+- "date": the date in YYYY-MM-DD format
+- "startHour": start hour in 24h format (number)
+- "startMinute": start minute (number)
+- "endHour": end hour in 24h format (number)
+- "endMinute": end minute (number)
+- "description": optional description (string or null)
+
+If no end time is specified, default to 1 hour after start. If no time is specified, default to 12:00. "tomorrow" means the day after today. "next Monday" means the coming Monday.`
+          },
+          { role: "user", content: args.message }
+        ],
+        temperature: 0,
+      });
+
+      const content = completion.choices[0]?.message?.content?.trim();
+      if (!content) throw new Error("Empty response from OpenAI");
+
+      const parsed = JSON.parse(content);
+
+      if (parsed.action === 'create' && parsed.title && parsed.date) {
+        const [year, month, day] = parsed.date.split('-').map(Number);
+        const startDate = new Date(year, month - 1, day, parsed.startHour || 12, parsed.startMinute || 0, 0, 0);
+        const endDate = new Date(year, month - 1, day, parsed.endHour || (parsed.startHour || 12) + 1, parsed.endMinute || 0, 0, 0);
+
+        const start = startDate.getTime();
+        const end = endDate.getTime();
+
+        await ctx.runMutation(internal.aiMutations.createEventFromAI, {
           title: parsed.title,
+          description: parsed.description || undefined,
           start,
           end,
-        },
-      };
-    }
+        });
 
-    return {
-      success: false,
-      message: "I didn't understand that command. Try something like:\n• \"Add 3pm meeting to take out trash\"\n• \"Schedule dentist appointment at 2:30pm tomorrow\"\n• \"Create team standup at 9am on Monday\"",
-    };
+        const timeStr = startDate.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+        const dateStr = startDate.toLocaleDateString('en-US', {
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric',
+        });
+
+        return {
+          success: true,
+          message: `Created "${parsed.title}" for ${dateStr} at ${timeStr}`,
+          event: { title: parsed.title, start, end },
+        };
+      }
+
+      return {
+        success: false,
+        message: "I didn't understand that command. Try something like:\n• \"Add 3pm meeting to take out trash\"\n• \"Schedule dentist appointment at 2:30pm tomorrow\"\n• \"Create team standup at 9am on Monday\"",
+      };
+    } catch {
+      // Fallback to regex if OpenAI fails
+      const result = regexFallback(args.message);
+      if (result.success && result.event) {
+        await ctx.runMutation(internal.aiMutations.createEventFromAI, {
+          title: result.event.title,
+          start: result.event.start,
+          end: result.event.end,
+        });
+      }
+      return result;
+    }
   },
 });

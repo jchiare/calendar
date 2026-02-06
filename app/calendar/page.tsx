@@ -104,8 +104,8 @@ function EventModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: EventFormData) => void;
-  onDelete?: () => void;
+  onSave: (data: EventFormData) => Promise<void>;
+  onDelete?: () => Promise<void>;
   initialData?: EventData;
   selectedDate?: Date;
   selectedStartTime?: string;
@@ -119,6 +119,8 @@ function EventModal({
     endTime: "10:00",
     location: ""
   });
+  const [isSaving, setIsSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (initialData) {
@@ -142,13 +144,29 @@ function EventModal({
         location: ""
       });
     }
+    setShowDeleteConfirm(false);
   }, [initialData, selectedDate, selectedStartTime, selectedEndTime, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    setIsSaving(true);
+    try {
+      await onSave(formData);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!onDelete) return;
+    setIsSaving(true);
+    try {
+      await onDelete();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -174,6 +192,7 @@ function EventModal({
           {initialData ? "Edit Event" : "New Event"}
         </h2>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <fieldset disabled={isSaving} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700">
               Title
@@ -261,24 +280,48 @@ function EventModal({
               placeholder="Description (optional)"
             />
           </div>
+          </fieldset>
           <div className="flex justify-between gap-3 pt-2">
             <div>
-              {onDelete && (
+              {onDelete && !showDeleteConfirm && (
                 <button
                   type="button"
-                  onClick={onDelete}
-                  className="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={isSaving}
+                  className="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer disabled:opacity-50"
                 >
                   Delete
                 </button>
+              )}
+              {onDelete && showDeleteConfirm && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-red-600">Are you sure?</span>
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={isSaving}
+                    className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    disabled={isSaving}
+                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
               )}
             </div>
             <div className="flex gap-3">
               <button
                 type="submit"
-                className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 cursor-pointer"
+                disabled={isSaving}
+                className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 cursor-pointer disabled:opacity-50"
               >
-                {initialData ? "Save Changes" : "Create Event"}
+                {isSaving ? "Saving..." : initialData ? "Save Changes" : "Create Event"}
               </button>
             </div>
           </div>
@@ -298,6 +341,8 @@ export default function CalendarPage() {
   const [selectedStartTime, setSelectedStartTime] = useState<string | undefined>();
   const [selectedEndTime, setSelectedEndTime] = useState<string | undefined>();
   const seededRef = useRef(false);
+  const currentTimeRef = useRef<HTMLDivElement>(null);
+  const hasScrolledRef = useRef(false);
 
   // Current time for the time indicator
   const [currentTime, setCurrentTime] = useState(() => new Date());
@@ -309,6 +354,16 @@ export default function CalendarPage() {
     }, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-scroll to current time indicator once the grid is rendered
+  useEffect(() => {
+    if (hasScrolledRef.current || !currentTimeRef.current) return;
+    hasScrolledRef.current = true;
+    const timer = setTimeout(() => {
+      currentTimeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+    return () => clearTimeout(timer);
+  });
 
   // Drag state for create, move, and resize operations
   const [isDragging, setIsDragging] = useState(false);
@@ -365,10 +420,19 @@ export default function CalendarPage() {
     });
   }, [currentWeekStart]);
 
-  // Calculate time range based on events
+  // Calculate time range based on events and current time
   const { startHour, endHour, timeSlots } = useMemo(() => {
     let minHour = DEFAULT_START_HOUR;
     let maxHour = DEFAULT_END_HOUR;
+
+    // Expand range to include current time so the indicator is always visible
+    const nowHour = currentTime.getHours();
+    if (nowHour < DEFAULT_START_HOUR) {
+      minHour = EXTENDED_START_HOUR;
+    }
+    if (nowHour >= DEFAULT_END_HOUR) {
+      maxHour = EXTENDED_END_HOUR;
+    }
 
     if (events && events.length > 0) {
       for (const event of events) {
@@ -393,7 +457,7 @@ export default function CalendarPage() {
     }
 
     return { startHour: minHour, endHour: maxHour, timeSlots: slots };
-  }, [events]);
+  }, [events, currentTime]);
 
   // Position events in the grid
   const eventPositions = useMemo(() => {
@@ -447,6 +511,11 @@ export default function CalendarPage() {
 
       const startDate = new Date(year, month - 1, day, startHours, startMinutes);
       const endDate = new Date(year, month - 1, day, endHours, endMinutes);
+
+      if (endDate <= startDate) {
+        alert("End time must be after start time");
+        return;
+      }
 
       if (editingEvent) {
         await updateEvent({
@@ -1106,6 +1175,7 @@ export default function CalendarPage() {
                     const topPercent = ((currentHour - startHour) / (endHour - startHour)) * 100;
                     return (
                       <div
+                        ref={currentTimeRef}
                         className="pointer-events-none absolute left-0 right-0 z-20 flex items-center"
                         style={{ top: `${topPercent}%` }}
                       >
