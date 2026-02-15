@@ -2,7 +2,7 @@
 
 import { action } from "./_generated/server";
 import { v } from "convex/values";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
 // Event proposal returned to the frontend for confirmation
 export type EventProposal = {
@@ -33,14 +33,14 @@ export const processMessage = action({
     ),
   },
   handler: async (_ctx, args): Promise<AIResponse> => {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
       return regexFallback(args.message);
     }
 
     try {
-      const client = new Anthropic({ apiKey });
+      const client = new OpenAI({ apiKey });
 
       const today = new Date();
       const todayStr = today.toLocaleDateString("en-US", {
@@ -52,7 +52,7 @@ export const processMessage = action({
 
       const systemPrompt = `You are a smart calendar assistant. Today is ${todayStr}.
 
-When the user wants to create an event, use the create_event tool. You must infer:
+When the user wants to create an event, use the create_event function. You must infer:
 
 DURATION RULES (apply these based on event type keywords):
 - coffee, lunch, drinks → 30 minutes
@@ -81,7 +81,9 @@ SMART PARSING:
 Keep your responses very short and friendly. Don't be overly formal.`;
 
       // Build message history for multi-turn context
-      const messages: Anthropic.MessageParam[] = [];
+      const messages: OpenAI.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+      ];
       if (args.conversationHistory) {
         for (const msg of args.conversationHistory) {
           if (msg.role === "user" || msg.role === "assistant") {
@@ -94,17 +96,15 @@ Keep your responses very short and friendly. Don't be overly formal.`;
       }
       messages.push({ role: "user", content: args.message });
 
-      const response = await client.messages.create({
-        model: "claude-sonnet-4-5-20250929",
-        max_tokens: 1024,
-        system: systemPrompt,
-        tools: [
-          {
+      const tools: OpenAI.ChatCompletionTool[] = [
+        {
+          type: "function",
+          function: {
             name: "create_event",
             description:
               "Create a calendar event. Returns a proposal for user confirmation.",
-            input_schema: {
-              type: "object" as const,
+            parameters: {
+              type: "object",
               properties: {
                 title: {
                   type: "string",
@@ -153,14 +153,25 @@ Keep your responses very short and friendly. Don't be overly formal.`;
               ],
             },
           },
-        ],
+        },
+      ];
+
+      const response = await client.chat.completions.create({
+        model: "gpt-4o-mini",
         messages,
+        tools,
       });
 
-      // Process the response
-      for (const block of response.content) {
-        if (block.type === "tool_use" && block.name === "create_event") {
-          const input = block.input as {
+      const choice = response.choices[0];
+      if (!choice?.message) {
+        return regexFallback(args.message);
+      }
+
+      // Check for tool calls
+      if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+        const toolCall = choice.message.tool_calls[0];
+        if (toolCall.type === "function" && toolCall.function.name === "create_event") {
+          const input = JSON.parse(toolCall.function.arguments) as {
             title: string;
             date: string;
             startHour: number;
@@ -227,13 +238,14 @@ Keep your responses very short and friendly. Don't be overly formal.`;
             proposal,
           };
         }
+      }
 
-        if (block.type === "text") {
-          return {
-            type: "message",
-            message: block.text,
-          };
-        }
+      // Plain text response
+      if (choice.message.content) {
+        return {
+          type: "message",
+          message: choice.message.content,
+        };
       }
 
       return {
