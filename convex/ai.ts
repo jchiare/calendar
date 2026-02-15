@@ -15,9 +15,10 @@ export type EventProposal = {
 };
 
 export type AIResponse = {
-  type: "create_event" | "message";
+  type: "create_event" | "create_events" | "message";
   message: string;
   proposal?: EventProposal;
+  proposals?: EventProposal[];
 };
 
 export const processMessage = action({
@@ -255,6 +256,22 @@ function formatTimestamp(startMs: number, endMs: number, durationLabel: string):
   return `${weekday}, ${month} ${day} ${fmtTime(s)}–${fmtTime(e)} · ${durationLabel}`;
 }
 
+// Parse a single time like "9am", "4:30pm", "14" into 24h hour and minute
+function parseTime(hourStr: string, minuteStr: string | undefined, meridiemStr: string | undefined): { hour: number; minute: number } {
+  let hour = parseInt(hourStr, 10);
+  const minute = minuteStr && !meridiemStr?.match(/am|pm/i) ? parseInt(minuteStr, 10) : 0;
+  if (meridiemStr) {
+    if (meridiemStr.toLowerCase() === "pm" && hour !== 12) hour += 12;
+    else if (meridiemStr.toLowerCase() === "am" && hour === 12) hour = 0;
+  } else if (hour < 7) {
+    hour += 12;
+  }
+  return { hour, minute };
+}
+
+const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const RECURRING_WEEKS = 4;
+
 // Regex fallback when no API key is configured
 function regexFallback(message: string, tzOffset: number): AIResponse {
   const lowerMessage = message.toLowerCase();
@@ -262,12 +279,11 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
   // Check if it looks like an event creation request
   const createPatterns = [
     /^(add|create|schedule|set up|book|make)/i,
-    /meeting|appointment|event|reminder|coffee|lunch|dinner|workout|gym|dentist|therapy|class|lesson|session/i,
+    /meeting|appointment|event|reminder|coffee|lunch|dinner|workout|gym|dentist|therapy|class|lesson|session|preschool|school|daycare/i,
   ];
 
-  // Also treat as event creation if the message contains a day + time (e.g. "speech therapy monday 4pm")
   const hasDayAndTime =
-    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)\b/i.test(lowerMessage) &&
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|weekdays?)\b/i.test(lowerMessage) &&
     /\d{1,2}(:\d{2})?\s*(am|pm)\b|\bat\s+\d{1,2}/i.test(lowerMessage);
 
   const isCreate = createPatterns.some((p) => p.test(lowerMessage)) || hasDayAndTime;
@@ -280,34 +296,158 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
     };
   }
 
-  // Get "today" in the user's local timezone by adjusting from UTC
+  // Get "today" in the user's local timezone
   const nowMs = Date.now();
   const localNowMs = nowMs - tzOffset * 60 * 1000;
   const localNow = new Date(localNowMs);
-  // Extract user's local date components via UTC methods on the shifted date
-  let eventYear = localNow.getUTCFullYear();
-  let eventMonth = localNow.getUTCMonth();
-  let eventDay = localNow.getUTCDate();
+  const todayYear = localNow.getUTCFullYear();
+  const todayMonth = localNow.getUTCMonth();
+  const todayDay = localNow.getUTCDate();
   const localDayOfWeek = localNow.getUTCDay();
 
-  // Parse date
+  // --- Parse time range (e.g. "9am to 4pm", "9:30am-4pm") ---
+  let startHour = 12, startMinute = 0, endHour = -1, endMinute = 0;
+  const timeRangeMatch = lowerMessage.match(
+    /(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*(?:to|-)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i
+  );
+  if (timeRangeMatch) {
+    const start = parseTime(timeRangeMatch[1], timeRangeMatch[2], timeRangeMatch[3]);
+    const end = parseTime(timeRangeMatch[4], timeRangeMatch[5], timeRangeMatch[6]);
+    startHour = start.hour;
+    startMinute = start.minute;
+    endHour = end.hour;
+    endMinute = end.minute;
+  } else {
+    // Single time
+    const timeMatch =
+      lowerMessage.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i) ||
+      lowerMessage.match(/(\d{1,2})\s*(am|pm)/i) ||
+      lowerMessage.match(/at\s+(\d{1,2})(?::(\d{2}))?(?!\d)/i);
+    if (timeMatch) {
+      const t = parseTime(timeMatch[1], timeMatch[2], timeMatch[3] || timeMatch[2]);
+      startHour = t.hour;
+      startMinute = t.minute;
+    }
+  }
+
+  // --- Parse day range (e.g. "monday to friday", "weekdays") ---
+  let recurringDays: number[] | null = null;
+  const dayRangeMatch = lowerMessage.match(
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\s*(?:to|through|-)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/i
+  );
+  if (dayRangeMatch) {
+    const startDay = DAY_NAMES.indexOf(dayRangeMatch[1].toLowerCase());
+    const endDay = DAY_NAMES.indexOf(dayRangeMatch[2].toLowerCase());
+    if (startDay >= 0 && endDay >= 0) {
+      recurringDays = [];
+      let d = startDay;
+      while (true) {
+        recurringDays.push(d);
+        if (d === endDay) break;
+        d = (d + 1) % 7;
+      }
+    }
+  } else if (/\bweekdays?\b/i.test(lowerMessage)) {
+    recurringDays = [1, 2, 3, 4, 5]; // Mon-Fri
+  }
+
+  // Infer duration (only if no explicit end time)
+  let durationMinutes: number | null = null;
+  if (endHour < 0) {
+    durationMinutes = 60;
+    if (/coffee|lunch|drinks/i.test(lowerMessage)) durationMinutes = 30;
+    else if (/meeting|sync|standup|1:1/i.test(lowerMessage)) durationMinutes = 30;
+    else if (/dinner|movie/i.test(lowerMessage)) durationMinutes = 90;
+    else if (/workout|gym|run/i.test(lowerMessage)) durationMinutes = 60;
+    else if (/quick\s*(chat|call)/i.test(lowerMessage)) durationMinutes = 15;
+    else if (/workshop|training/i.test(lowerMessage)) durationMinutes = 120;
+    endHour = startHour + Math.floor(durationMinutes / 60);
+    endMinute = startMinute + (durationMinutes % 60);
+    if (endMinute >= 60) { endHour++; endMinute -= 60; }
+  }
+
+  const totalMinutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
+  const durationLabel = totalMinutes >= 60
+    ? `${(totalMinutes / 60).toFixed(totalMinutes % 60 === 0 ? 0 : 1)}hr`
+    : `${totalMinutes} min`;
+
+  // --- Extract title ---
+  let title = message
+    .replace(/^(add|create|schedule|set up|book|make)\s+/i, "")
+    .replace(/^(a|an)\s+/i, "")
+    // Strip time range ("9am to 4pm")
+    .replace(/\b\d{1,2}(?::\d{2})?\s*(am|pm)\s*(?:to|-)\s*\d{1,2}(?::\d{2})?\s*(am|pm)\b/gi, "")
+    // Strip single times ("9am", "at 3pm")
+    .replace(/\b(at|for|on|from|to)\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, "")
+    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, "")
+    // Strip day range ("monday to fridays")
+    .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\s*(?:to|through|-)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/gi, "")
+    .replace(/\bweekdays?\b/gi, "")
+    // Strip individual day names and date words
+    .replace(/\b(tomorrow|today|next\s+\w+day)\b/gi, "")
+    .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (title.length < 3) title = "New event";
+  title = title.replace(/\b\w/g, (c) => c.toUpperCase());
+
+  // --- Build proposals ---
+  if (recurringDays && recurringDays.length > 0) {
+    // Recurring: generate events for each matching day over RECURRING_WEEKS
+    const proposals: EventProposal[] = [];
+
+    for (let week = 0; week < RECURRING_WEEKS; week++) {
+      for (const dayNum of recurringDays) {
+        // Find the next occurrence of this day of the week
+        let daysUntil = dayNum - localDayOfWeek;
+        if (daysUntil <= 0) daysUntil += 7;
+        daysUntil += week * 7;
+
+        const startMs = Date.UTC(todayYear, todayMonth, todayDay + daysUntil, startHour, startMinute)
+          + tzOffset * 60 * 1000;
+        const endMs = Date.UTC(todayYear, todayMonth, todayDay + daysUntil, endHour, endMinute)
+          + tzOffset * 60 * 1000;
+
+        proposals.push({ title, start: startMs, end: endMs });
+      }
+    }
+
+    // Sort by start time
+    proposals.sort((a, b) => a.start - b.start);
+
+    const dayLabels = recurringDays.map((d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]);
+    const dayRange = dayLabels.length > 2
+      ? `${dayLabels[0]}–${dayLabels[dayLabels.length - 1]}`
+      : dayLabels.join(", ");
+
+    const fmtHr = (h: number, m: number) => {
+      const ampm = h >= 12 ? "PM" : "AM";
+      const h12 = h % 12 || 12;
+      return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+    };
+
+    const msg = `${dayRange} ${fmtHr(startHour, startMinute)}–${fmtHr(endHour, endMinute)} · ${durationLabel} · ${RECURRING_WEEKS} weeks (${proposals.length} events)`;
+
+    return {
+      type: "create_events",
+      message: msg,
+      proposal: proposals[0],
+      proposals,
+    };
+  }
+
+  // --- Single event ---
+  let eventYear = todayYear, eventMonth = todayMonth, eventDay = todayDay;
+
   if (lowerMessage.includes("tomorrow")) {
     const d = new Date(Date.UTC(eventYear, eventMonth, eventDay + 1));
     eventYear = d.getUTCFullYear();
     eventMonth = d.getUTCMonth();
     eventDay = d.getUTCDate();
   } else {
-    const dayNames = [
-      "sunday",
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "friday",
-      "saturday",
-    ];
-    for (let i = 0; i < dayNames.length; i++) {
-      if (lowerMessage.includes(dayNames[i])) {
+    for (let i = 0; i < DAY_NAMES.length; i++) {
+      if (lowerMessage.includes(DAY_NAMES[i])) {
         let daysUntil = i - localDayOfWeek;
         if (daysUntil <= 0) daysUntil += 7;
         const d = new Date(Date.UTC(eventYear, eventMonth, eventDay + daysUntil));
@@ -319,66 +459,10 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
     }
   }
 
-  // Parse time
-  let hour = 12;
-  let minute = 0;
-  const timeMatch =
-    lowerMessage.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i) ||
-    lowerMessage.match(/(\d{1,2})\s*(am|pm)/i) ||
-    lowerMessage.match(/at\s+(\d{1,2})(?::(\d{2}))?(?!\d)/i);
-  if (timeMatch) {
-    hour = parseInt(timeMatch[1], 10);
-    minute = timeMatch[2] && !timeMatch[2].match(/am|pm/i)
-      ? parseInt(timeMatch[2], 10)
-      : 0;
-    const meridiem = timeMatch[3] || timeMatch[2];
-    if (meridiem && typeof meridiem === "string") {
-      if (meridiem.toLowerCase() === "pm" && hour !== 12) hour += 12;
-      else if (meridiem.toLowerCase() === "am" && hour === 12) hour = 0;
-    } else if (hour < 7) {
-      hour += 12; // Assume PM for small numbers without meridiem
-    }
-  }
-
-  // Infer duration from event type
-  let durationMinutes = 60;
-  if (/coffee|lunch|drinks/i.test(lowerMessage)) durationMinutes = 30;
-  else if (/meeting|sync|standup|1:1/i.test(lowerMessage)) durationMinutes = 30;
-  else if (/dinner|movie/i.test(lowerMessage)) durationMinutes = 90;
-  else if (/workout|gym|run/i.test(lowerMessage)) durationMinutes = 60;
-  else if (/quick\s*(chat|call)/i.test(lowerMessage)) durationMinutes = 15;
-  else if (/workshop|training/i.test(lowerMessage)) durationMinutes = 120;
-
-  // Extract title
-  let title = message
-    .replace(/^(add|create|schedule|set up|book|make)\s+/i, "")
-    .replace(/^(a|an)\s+/i, "")
-    .replace(
-      /\b(at|for|on|from|to)\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi,
-      ""
-    )
-    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, "")
-    .replace(/\b(tomorrow|today|next\s+\w+day)\b/gi, "")
-    .replace(
-      /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi,
-      ""
-    )
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (title.length < 3) title = "New event";
-  // Title-case each word (e.g. "speech therapy ellie" → "Speech Therapy Ellie")
-  title = title.replace(/\b\w/g, (c) => c.toUpperCase());
-
-  // Build timestamp in UTC, then shift by user's timezone offset
-  const startMs = Date.UTC(eventYear, eventMonth, eventDay, hour, minute)
+  const startMs = Date.UTC(eventYear, eventMonth, eventDay, startHour, startMinute)
     + tzOffset * 60 * 1000;
-  const endMs = startMs + durationMinutes * 60 * 1000;
-
-  const durationLabel =
-    durationMinutes >= 60
-      ? `${durationMinutes / 60}hr`
-      : `${durationMinutes} min`;
+  const endMs = Date.UTC(eventYear, eventMonth, eventDay, endHour, endMinute)
+    + tzOffset * 60 * 1000;
 
   return {
     type: "create_event",

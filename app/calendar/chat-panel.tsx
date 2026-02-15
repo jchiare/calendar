@@ -10,6 +10,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   proposal?: EventProposal;
+  proposals?: EventProposal[];
   status?: "pending" | "confirmed" | "tweaking";
 };
 
@@ -55,17 +56,20 @@ function formatProposalTime(start: number, end: number): string {
 function ConfirmationCard({
   message,
   onConfirm,
+  onBatchConfirm,
   onTweak,
   onCancelTweak,
   onSaveTweak,
 }: {
   message: ChatMessage;
   onConfirm: (proposal: EventProposal) => void;
+  onBatchConfirm: (proposals: EventProposal[]) => void;
   onTweak: (messageId: string) => void;
   onCancelTweak: (messageId: string) => void;
   onSaveTweak: (messageId: string, proposal: EventProposal) => void;
 }) {
   const proposal = message.proposal!;
+  const isBatch = message.proposals && message.proposals.length > 1;
   const [tweakData, setTweakData] = useState(() => {
     const start = new Date(proposal.start);
     const end = new Date(proposal.end);
@@ -87,7 +91,8 @@ function ConfirmationCard({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
         </svg>
         <span>
-          <span className="font-medium">{proposal.title}</span> added
+          <span className="font-medium">{proposal.title}</span>
+          {isBatch ? ` (${message.proposals!.length} events)` : ""} added
         </span>
       </div>
     );
@@ -220,12 +225,21 @@ function ConfirmationCard({
     <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
       <p className="text-sm font-semibold text-slate-900">{proposal.title}</p>
       <div className="mt-1.5 flex flex-col gap-0.5">
-        <div className="flex items-center gap-1.5 text-xs text-slate-600">
-          <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          {formatProposalTime(proposal.start, proposal.end)}
-        </div>
+        {isBatch ? (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {message.content}
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {formatProposalTime(proposal.start, proposal.end)}
+          </div>
+        )}
         {proposal.location && (
           <div className="flex items-center gap-1.5 text-xs text-slate-600">
             <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -245,17 +259,19 @@ function ConfirmationCard({
         )}
       </div>
       <div className="mt-2.5 flex items-center justify-between">
+        {!isBatch && (
+          <button
+            onClick={() => onTweak(message.id)}
+            className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Modify
+          </button>
+        )}
         <button
-          onClick={() => onTweak(message.id)}
-          className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          onClick={() => isBatch ? onBatchConfirm(message.proposals!) : onConfirm(proposal)}
+          className={`cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 ${isBatch ? "ml-auto" : ""}`}
         >
-          Modify
-        </button>
-        <button
-          onClick={() => onConfirm(proposal)}
-          className="cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
-        >
-          Add
+          {isBatch ? `Add ${message.proposals!.length} events` : "Add"}
         </button>
       </div>
     </div>
@@ -275,6 +291,7 @@ export default function ChatPanel({
 
   const processMessage = useAction(api.ai.processMessage);
   const createEvent = useMutation(api.events.createEvent);
+  const batchCreateEvents = useMutation(api.events.batchCreateEvents);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -316,7 +333,8 @@ export default function ChatPanel({
           role: "assistant",
           content: response.message,
           proposal: response.proposal,
-          status: response.type === "create_event" ? "pending" : undefined,
+          proposals: response.proposals,
+          status: response.type === "create_event" || response.type === "create_events" ? "pending" : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
 
@@ -378,6 +396,41 @@ export default function ChatPanel({
       }
     },
     [createEvent, onGhostEventChange]
+  );
+
+  const handleBatchConfirm = useCallback(
+    async (proposals: EventProposal[]) => {
+      try {
+        await batchCreateEvents({
+          events: proposals.map((p) => ({
+            title: p.title,
+            start: p.start,
+            end: p.end,
+            location: p.location,
+            description: p.description,
+          })),
+        });
+
+        // Update the message status to confirmed
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.proposals === proposals ? { ...m, status: "confirmed" as const } : m
+          )
+        );
+
+        onGhostEventChange(null);
+      } catch {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `error-${Date.now()}`,
+            role: "assistant",
+            content: "Failed to save the events. Please try again.",
+          },
+        ]);
+      }
+    },
+    [batchCreateEvents, onGhostEventChange]
   );
 
   const handleTweak = useCallback((messageId: string) => {
@@ -507,6 +560,7 @@ export default function ChatPanel({
                     <ConfirmationCard
                       message={msg}
                       onConfirm={handleConfirm}
+                      onBatchConfirm={handleBatchConfirm}
                       onTweak={handleTweak}
                       onCancelTweak={handleCancelTweak}
                       onSaveTweak={handleSaveTweak}

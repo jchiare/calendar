@@ -152,6 +152,69 @@ export const updateEvent = mutation({
   }
 });
 
+export const batchCreateEvents = mutation({
+  args: {
+    events: v.array(
+      v.object({
+        title: v.string(),
+        description: v.optional(v.string()),
+        start: v.number(),
+        end: v.number(),
+        location: v.optional(v.string()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    // Validate all events
+    for (const event of args.events) {
+      validateEvent(event);
+    }
+
+    // Get or create a default calendar (same logic as createEvent)
+    let calendar = await ctx.db.query("calendars").first();
+    if (!calendar) {
+      const now = Date.now();
+      const userId = await ctx.db.insert("users", {
+        name: "Default User",
+        email: "user@example.com",
+        timezone: "America/Los_Angeles",
+        createdAt: now,
+      });
+      const workspaceId = await ctx.db.insert("workspaces", {
+        name: "Family HQ",
+        ownerId: userId,
+        plan: "starter",
+        createdAt: now,
+      });
+      const calendarId = await ctx.db.insert("calendars", {
+        workspaceId,
+        provider: "convex",
+        externalId: `family-${workspaceId}`,
+        syncStatus: "ready",
+        name: "Family Calendar",
+        timezone: "America/Los_Angeles",
+      });
+      calendar = await ctx.db.get(calendarId);
+    }
+
+    const now = Date.now();
+    await Promise.all(
+      args.events.map((event) =>
+        ctx.db.insert("events", {
+          calendarId: calendar!._id,
+          title: event.title,
+          description: event.description,
+          start: event.start,
+          end: event.end,
+          location: event.location,
+          updatedAt: now,
+          createdAt: now,
+        })
+      )
+    );
+  },
+});
+
 export const deleteEvent = mutation({
   args: {
     id: v.id("events")
