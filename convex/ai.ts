@@ -127,19 +127,19 @@ Keep your responses very short and friendly. Don't be overly formal.`;
                   "Duration in minutes, inferred from event type",
               },
               location: {
-                type: "string",
+                type: ["string", "null"],
                 description:
-                  "Location if mentioned (e.g., 'Blue Bottle')",
+                  "Location if mentioned (e.g., 'Blue Bottle'), or null",
               },
               attendees: {
-                type: "array",
+                type: ["array", "null"],
                 items: { type: "string" },
                 description:
-                  "Names of people mentioned (e.g., ['George'])",
+                  "Names of people mentioned (e.g., ['George']), or null",
               },
               description: {
-                type: "string",
-                description: "Optional notes or description",
+                type: ["string", "null"],
+                description: "Optional notes or description, or null",
               },
             },
             required: [
@@ -148,6 +148,9 @@ Keep your responses very short and friendly. Don't be overly formal.`;
               "startHour",
               "startMinute",
               "durationMinutes",
+              "location",
+              "attendees",
+              "description",
             ],
             additionalProperties: false,
           },
@@ -172,9 +175,9 @@ Keep your responses very short and friendly. Don't be overly formal.`;
             startHour: number;
             startMinute: number;
             durationMinutes: number;
-            location?: string;
-            attendees?: string[];
-            description?: string;
+            location: string | null;
+            attendees: string[] | null;
+            description: string | null;
           };
 
           const [year, month, day] = parsedArgs.date.split("-").map(Number);
@@ -195,9 +198,9 @@ Keep your responses very short and friendly. Don't be overly formal.`;
             title: parsedArgs.title,
             start: startDate.getTime(),
             end: endDate.getTime(),
-            location: parsedArgs.location,
-            attendees: parsedArgs.attendees,
-            description: parsedArgs.description,
+            location: parsedArgs.location ?? undefined,
+            attendees: parsedArgs.attendees ?? undefined,
+            description: parsedArgs.description ?? undefined,
           };
 
           // Build a friendly message
@@ -260,10 +263,15 @@ function regexFallback(message: string): AIResponse {
   // Check if it looks like an event creation request
   const createPatterns = [
     /^(add|create|schedule|set up|book|make)/i,
-    /meeting|appointment|event|reminder|coffee|lunch|dinner|workout|gym|dentist/i,
+    /meeting|appointment|event|reminder|coffee|lunch|dinner|workout|gym|dentist|therapy|class|lesson|session/i,
   ];
 
-  const isCreate = createPatterns.some((p) => p.test(lowerMessage));
+  // Also treat as event creation if the message contains a day + time (e.g. "speech therapy monday 4pm")
+  const hasDayAndTime =
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)\b/i.test(lowerMessage) &&
+    /\d{1,2}(:\d{2})?\s*(am|pm)\b|\bat\s+\d{1,2}/i.test(lowerMessage);
+
+  const isCreate = createPatterns.some((p) => p.test(lowerMessage)) || hasDayAndTime;
 
   if (!isCreate) {
     return {
