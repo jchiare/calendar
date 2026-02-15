@@ -219,27 +219,43 @@ function ConfirmationCard({
   return (
     <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
       <p className="text-sm font-semibold text-slate-900">{proposal.title}</p>
-      <p className="mt-0.5 text-xs text-slate-600">
-        {formatProposalTime(proposal.start, proposal.end)}
-        {proposal.location ? ` · ${proposal.location}` : ""}
-      </p>
-      {proposal.attendees && proposal.attendees.length > 0 && (
-        <p className="mt-0.5 text-xs text-slate-500">
-          with {proposal.attendees.join(", ")}
-        </p>
-      )}
-      <div className="mt-2 flex gap-2">
+      <div className="mt-1.5 flex flex-col gap-0.5">
+        <div className="flex items-center gap-1.5 text-xs text-slate-600">
+          <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {formatProposalTime(proposal.start, proposal.end)}
+        </div>
+        {proposal.location && (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            {proposal.location}
+          </div>
+        )}
+        {proposal.attendees && proposal.attendees.length > 0 && (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            {proposal.attendees.join(", ")}
+          </div>
+        )}
+      </div>
+      <div className="mt-2.5 flex items-center justify-between">
+        <button
+          onClick={() => onTweak(message.id)}
+          className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+        >
+          Modify
+        </button>
         <button
           onClick={() => onConfirm(proposal)}
           className="cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
         >
           Add
-        </button>
-        <button
-          onClick={() => onTweak(message.id)}
-          className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-        >
-          Tweak
         </button>
       </div>
     </div>
@@ -292,6 +308,7 @@ export default function ChatPanel({
         const response: AIResponse = await processMessage({
           message: messageText,
           conversationHistory: history,
+          timezoneOffset: new Date().getTimezoneOffset(),
         });
 
         const assistantMessage: ChatMessage = {

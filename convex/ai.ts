@@ -31,12 +31,16 @@ export const processMessage = action({
         })
       )
     ),
+    timezoneOffset: v.optional(v.number()),
   },
   handler: async (_ctx, args): Promise<AIResponse> => {
+    // timezoneOffset: minutes from UTC (e.g. 480 for PST).
+    // Server runs in UTC, so we adjust timestamps to match the user's local time.
+    const tzOffset = args.timezoneOffset ?? 0;
     const apiKey = process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
-      return regexFallback(args.message);
+      return regexFallback(args.message, tzOffset);
     }
 
     try {
@@ -181,51 +185,26 @@ Keep your responses very short and friendly. Don't be overly formal.`;
           };
 
           const [year, month, day] = parsedArgs.date.split("-").map(Number);
-          const startDate = new Date(
-            year,
-            month - 1,
-            day,
-            parsedArgs.startHour,
-            parsedArgs.startMinute,
-            0,
-            0
-          );
-          const endDate = new Date(
-            startDate.getTime() + parsedArgs.durationMinutes * 60 * 1000
-          );
+          // Build timestamp in UTC then adjust for user's timezone
+          const startMs = Date.UTC(year, month - 1, day, parsedArgs.startHour, parsedArgs.startMinute)
+            + tzOffset * 60 * 1000;
+          const endMs = startMs + parsedArgs.durationMinutes * 60 * 1000;
 
           const proposal: EventProposal = {
             title: parsedArgs.title,
-            start: startDate.getTime(),
-            end: endDate.getTime(),
+            start: startMs,
+            end: endMs,
             location: parsedArgs.location ?? undefined,
             attendees: parsedArgs.attendees ?? undefined,
             description: parsedArgs.description ?? undefined,
           };
-
-          // Build a friendly message
-          const timeStr = startDate.toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-          });
-          const endTimeStr = endDate.toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-          });
-          const dateStr = startDate.toLocaleDateString("en-US", {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-          });
 
           const durationLabel =
             parsedArgs.durationMinutes >= 60
               ? `${parsedArgs.durationMinutes / 60}hr`
               : `${parsedArgs.durationMinutes} min`;
 
-          let message = `${dateStr} ${timeStr}–${endTimeStr} · ${durationLabel}`;
+          let message = formatTimestamp(startMs, endMs, durationLabel);
           if (parsedArgs.location) {
             message += ` · ${parsedArgs.location}`;
           }
@@ -251,13 +230,33 @@ Keep your responses very short and friendly. Don't be overly formal.`;
         message: "I'm not sure what you'd like to do. Try something like \"coffee with George tomorrow at 3\".",
       };
     } catch {
-      return regexFallback(args.message);
+      return regexFallback(args.message, tzOffset);
     }
   },
 });
 
+// Format timestamps into a readable message (using UTC to avoid server TZ issues)
+function formatTimestamp(startMs: number, endMs: number, durationLabel: string): string {
+  const s = new Date(startMs);
+  const e = new Date(endMs);
+  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][s.getUTCDay()];
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months[s.getUTCMonth()];
+  const day = s.getUTCDate();
+
+  const fmtTime = (d: Date) => {
+    let h = d.getUTCHours();
+    const m = d.getUTCMinutes();
+    const ampm = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2, "0")} ${ampm}`;
+  };
+
+  return `${weekday}, ${month} ${day} ${fmtTime(s)}–${fmtTime(e)} · ${durationLabel}`;
+}
+
 // Regex fallback when no API key is configured
-function regexFallback(message: string): AIResponse {
+function regexFallback(message: string, tzOffset: number): AIResponse {
   const lowerMessage = message.toLowerCase();
 
   // Check if it looks like an event creation request
@@ -281,15 +280,24 @@ function regexFallback(message: string): AIResponse {
     };
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Get "today" in the user's local timezone by adjusting from UTC
+  const nowMs = Date.now();
+  const localNowMs = nowMs - tzOffset * 60 * 1000;
+  const localNow = new Date(localNowMs);
+  // Extract user's local date components via UTC methods on the shifted date
+  let eventYear = localNow.getUTCFullYear();
+  let eventMonth = localNow.getUTCMonth();
+  let eventDay = localNow.getUTCDate();
+  const localDayOfWeek = localNow.getUTCDay();
 
   // Parse date
-  let eventDate = new Date(today);
   if (lowerMessage.includes("tomorrow")) {
-    eventDate.setDate(eventDate.getDate() + 1);
+    const d = new Date(Date.UTC(eventYear, eventMonth, eventDay + 1));
+    eventYear = d.getUTCFullYear();
+    eventMonth = d.getUTCMonth();
+    eventDay = d.getUTCDate();
   } else {
-    const days = [
+    const dayNames = [
       "sunday",
       "monday",
       "tuesday",
@@ -298,12 +306,14 @@ function regexFallback(message: string): AIResponse {
       "friday",
       "saturday",
     ];
-    for (let i = 0; i < days.length; i++) {
-      if (lowerMessage.includes(days[i])) {
-        const currentDay = eventDate.getDay();
-        let daysUntil = i - currentDay;
+    for (let i = 0; i < dayNames.length; i++) {
+      if (lowerMessage.includes(dayNames[i])) {
+        let daysUntil = i - localDayOfWeek;
         if (daysUntil <= 0) daysUntil += 7;
-        eventDate.setDate(eventDate.getDate() + daysUntil);
+        const d = new Date(Date.UTC(eventYear, eventMonth, eventDay + daysUntil));
+        eventYear = d.getUTCFullYear();
+        eventMonth = d.getUTCMonth();
+        eventDay = d.getUTCDate();
         break;
       }
     }
@@ -359,25 +369,11 @@ function regexFallback(message: string): AIResponse {
   if (title.length < 3) title = "New event";
   title = title.charAt(0).toUpperCase() + title.slice(1);
 
-  const startDate = new Date(eventDate);
-  startDate.setHours(hour, minute, 0, 0);
-  const endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
+  // Build timestamp in UTC, then shift by user's timezone offset
+  const startMs = Date.UTC(eventYear, eventMonth, eventDay, hour, minute)
+    + tzOffset * 60 * 1000;
+  const endMs = startMs + durationMinutes * 60 * 1000;
 
-  const timeStr = startDate.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-  const endTimeStr = endDate.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-  const dateStr = startDate.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
   const durationLabel =
     durationMinutes >= 60
       ? `${durationMinutes / 60}hr`
@@ -385,11 +381,11 @@ function regexFallback(message: string): AIResponse {
 
   return {
     type: "create_event",
-    message: `${dateStr} ${timeStr}–${endTimeStr} · ${durationLabel}`,
+    message: formatTimestamp(startMs, endMs, durationLabel),
     proposal: {
       title,
-      start: startDate.getTime(),
-      end: endDate.getTime(),
+      start: startMs,
+      end: endMs,
     },
   };
 }
