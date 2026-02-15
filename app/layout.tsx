@@ -16,9 +16,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <div className="min-h-screen bg-slate-50 text-slate-900">
             <header className="border-b border-slate-200 bg-white">
-              <div className="container-page flex flex-wrap items-center justify-between gap-4 py-4">
-                <Link href="/" className="text-lg font-semibold text-slate-900 hover:text-indigo-600 transition-colors">
-                  Family Calendar
+              <div className="mx-auto max-w-[1600px] flex flex-wrap items-center justify-between gap-4 px-4 py-3">
+                <Link href="/calendar" className="text-lg font-semibold text-slate-900 hover:text-indigo-600 transition-colors">
+                  Calendar
                 </Link>
                 <Nav />
               </div>

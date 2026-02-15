@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import ChatPanel from "./chat-panel";
 
 type EventData = Doc<"events">;
 
@@ -329,6 +330,14 @@ export default function CalendarPage() {
   const currentTimeRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
 
+  // Ghost event from AI chat (pending confirmation)
+  const [ghostEvent, setGhostEvent] = useState<{
+    title: string;
+    start: number;
+    end: number;
+    location?: string;
+  } | null>(null);
+
   // Current time for the time indicator
   const [currentTime, setCurrentTime] = useState(() => new Date());
 
@@ -478,6 +487,47 @@ export default function CalendarPage() {
       };
     });
   }, [events, startHour, endHour]);
+
+  // Position ghost event for the calendar overlay
+  const ghostEventPosition = useMemo(() => {
+    if (!ghostEvent) return null;
+
+    const startDate = new Date(ghostEvent.start);
+    const endDate = new Date(ghostEvent.end);
+
+    const dayOfWeek = startDate.getDay();
+    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+
+    // Check if ghost event is in the current week
+    const weekEnd = new Date(currentWeekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    if (startDate < currentWeekStart || startDate >= weekEnd) return null;
+
+    const eventStartHour = startDate.getHours() + startDate.getMinutes() / 60;
+    const eventEndHour = endDate.getHours() + endDate.getMinutes() / 60;
+
+    const top = ((eventStartHour - startHour) / (endHour - startHour)) * 100;
+    const height = ((eventEndHour - eventStartHour) / (endHour - startHour)) * 100;
+
+    return {
+      title: ghostEvent.title,
+      dayIndex,
+      top: Math.max(0, top),
+      height: Math.min(100 - Math.max(0, top), height),
+      startTime: formatTime(startDate),
+      endTime: formatTime(endDate),
+    };
+  }, [ghostEvent, startHour, endHour, currentWeekStart]);
+
+  // Auto-navigate to ghost event's week when it's created
+  useEffect(() => {
+    if (!ghostEvent) return;
+    const ghostDate = new Date(ghostEvent.start);
+    const ghostWeekStart = getWeekStart(ghostDate);
+    if (ghostWeekStart.getTime() !== currentWeekStart.getTime()) {
+      setCurrentWeekStart(ghostWeekStart);
+    }
+  }, [ghostEvent, currentWeekStart]);
 
   const navigateWeek = useCallback((direction: number) => {
     setCurrentWeekStart((prev) => {
@@ -956,81 +1006,45 @@ export default function CalendarPage() {
   }, [currentWeekStart]);
 
   return (
-    <main className="container-page py-10">
+    <main className="mx-auto max-w-[1600px] px-4 py-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">
-            Weekly view
-          </p>
-          <h1 className="text-3xl font-semibold text-slate-900">
-            Family calendar
-          </h1>
-          <p className="text-sm text-slate-600">
-            Shared availability synced with Google Calendar.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigateWeek(-1)}
-              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50"
               aria-label="Previous week"
             >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 19l-7-7 7-7"
-                />
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <span className="min-w-[180px] text-center text-sm font-medium text-slate-700">
+            <span className="min-w-[160px] text-center text-sm font-medium text-slate-700">
               {weekLabel}
             </span>
             <button
               onClick={() => navigateWeek(1)}
-              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50"
               aria-label="Next week"
             >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5l7 7-7 7"
-                />
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
+            <button
+              onClick={goToToday}
+              disabled={isCurrentWeek}
+              className="cursor-pointer rounded-full border border-slate-200 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50"
+            >
+              Today
+            </button>
           </div>
-          <button
-            onClick={goToToday}
-            disabled={isCurrentWeek}
-            className="cursor-pointer rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50"
-          >
-            Today
-          </button>
-          <button
-            onClick={() => openNewEventModal()}
-            className="cursor-pointer rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-          >
-            New event
-          </button>
         </div>
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1.8fr_0.5fr]">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_340px]" style={{ height: "calc(100vh - 120px)" }}>
+        <section className="overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           {/* Day headers */}
           <div className="grid grid-cols-[80px_repeat(7,minmax(0,1fr))] gap-2 border-b border-slate-100 pb-4">
             <div />
@@ -1137,6 +1151,28 @@ export default function CalendarPage() {
                       );
                     })}
 
+                  {/* Ghost event preview (AI proposal) */}
+                  {ghostEventPosition && ghostEventPosition.dayIndex === dayIdx && (
+                    <div
+                      className="pointer-events-none absolute left-1 right-1 animate-pulse rounded-lg border-2 border-dashed border-green-400 bg-green-100/60"
+                      style={{
+                        top: `${ghostEventPosition.top}%`,
+                        height: `${Math.max(ghostEventPosition.height, 8)}%`
+                      }}
+                    >
+                      <div className="p-2">
+                        <p className="truncate text-xs font-semibold text-green-800">
+                          {ghostEventPosition.title}
+                        </p>
+                        {ghostEventPosition.height > 12 && (
+                          <p className="truncate text-xs text-green-700">
+                            {ghostEventPosition.startTime}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Drag preview overlay */}
                   {dragPreview && dragPreview.dayIndex === dayIdx && (
                     <div
@@ -1185,95 +1221,8 @@ export default function CalendarPage() {
           )}
         </section>
 
-        <aside className="space-y-6">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100">
-                <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Today
-              </h2>
-            </div>
-            <p className="mt-1 text-sm text-slate-500">
-              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-            </p>
-            {(() => {
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const tomorrow = new Date(today);
-              tomorrow.setDate(tomorrow.getDate() + 1);
-
-              const todayEvents = events?.filter((event) => {
-                const eventDate = new Date(event.start);
-                return eventDate >= today && eventDate < tomorrow;
-              }).sort((a, b) => a.start - b.start) || [];
-
-              if (todayEvents.length === 0) {
-                return (
-                  <div className="mt-4 rounded-xl border border-dashed border-slate-200 p-4 text-center">
-                    <p className="text-sm text-slate-500">No events today</p>
-                    <button
-                      onClick={() => openNewEventModal(new Date())}
-                      className="cursor-pointer mt-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
-                    >
-                      + Add an event
-                    </button>
-                  </div>
-                );
-              }
-
-              return (
-                <ul className="mt-4 space-y-3">
-                  {todayEvents.map((event) => {
-                    const startDate = new Date(event.start);
-                    const endDate = new Date(event.end);
-                    return (
-                      <li
-                        key={event._id}
-                        onClick={() => openEditEventModal(event)}
-                        className="group cursor-pointer rounded-xl border border-slate-100 p-3 transition-colors hover:border-indigo-200 hover:bg-indigo-50/50"
-                      >
-                        <p className="font-medium text-slate-900 group-hover:text-indigo-900">
-                          {event.title}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {formatTime(startDate)} – {formatTime(endDate)}
-                        </p>
-                        {event.location && (
-                          <p className="mt-1 flex items-center gap-1 text-xs text-slate-400">
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                            {event.location}
-                          </p>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              );
-            })()}
-          </div>
-          <div className="rounded-3xl border border-indigo-100 bg-indigo-600 p-6 text-white">
-            <h2 className="text-lg font-semibold">This week</h2>
-            <p className="mt-2 text-sm text-indigo-100">
-              {events && events.length > 0
-                ? `You have ${events.length} event${events.length > 1 ? "s" : ""} scheduled.`
-                : "No events scheduled."}
-            </p>
-            <div className="mt-4">
-              <button
-                onClick={() => openNewEventModal()}
-                className="cursor-pointer rounded-full bg-white/20 px-4 py-2 text-sm font-semibold transition-colors hover:bg-white/30"
-              >
-                + New event
-              </button>
-            </div>
-          </div>
+        <aside className="min-h-0">
+          <ChatPanel onGhostEventChange={setGhostEvent} />
         </aside>
       </div>
 
