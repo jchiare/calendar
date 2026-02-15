@@ -273,6 +273,14 @@ function parseTime(hourStr: string, minuteStr: string | undefined, meridiemStr: 
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const RECURRING_WEEKS = 8;
 
+// Map abbreviated day names to day-of-week index (0=Sun .. 6=Sat)
+// su=Sun, m=Mon, t/tu=Tue, w=Wed, th=Thu, f=Fri, sa=Sat
+const DAY_ABBREV_MAP: Record<string, number> = {
+  su: 0, m: 1, t: 2, tu: 2, w: 3, th: 4, f: 5, sa: 6,
+};
+// Regex fragment matching abbreviated day names (longer alternatives first)
+const DAY_ABBREV_RE = "su|sa|th|tu|m|t|w|f";
+
 // Regex fallback when no API key is configured
 function regexFallback(message: string, tzOffset: number): AIResponse {
   const lowerMessage = message.toLowerCase();
@@ -283,8 +291,12 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
     /meeting|appointment|event|reminder|coffee|lunch|dinner|workout|gym|dentist|therapy|class|lesson|session|preschool|school|daycare/i,
   ];
 
+  // Match abbreviated day ranges like "m-f", "t to f", "tu-th"
+  const abbrevDayRangeRe = new RegExp(`(?:^|\\s)(${DAY_ABBREV_RE})\\s*(?:[-–]|\\s+to\\s+)\\s*(${DAY_ABBREV_RE})(?:\\s|$|,)`, "i");
+
   const hasDayAndTime =
-    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|weekdays?)\b/i.test(lowerMessage) &&
+    (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|weekdays?)\b/i.test(lowerMessage) ||
+     abbrevDayRangeRe.test(lowerMessage)) &&
     /\d{1,2}(:\d{2})?\s*(am|pm)\b|\bat\s+\d{1,2}/i.test(lowerMessage);
 
   const isCreate = createPatterns.some((p) => p.test(lowerMessage)) || hasDayAndTime;
@@ -331,15 +343,31 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
     }
   }
 
-  // --- Parse day range (e.g. "monday to friday", "weekdays") ---
+  // --- Parse day range (e.g. "monday to friday", "m-f", "weekdays") ---
   let recurringDays: number[] | null = null;
   const dayRangeMatch = lowerMessage.match(
     /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\s*(?:to|through|-)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/i
   );
+  // Also try abbreviated day ranges: "m-f", "t to f", "tu-th", etc.
+  const abbrevMatch = !dayRangeMatch
+    ? lowerMessage.match(new RegExp(`(?:^|\\s)(${DAY_ABBREV_RE})\\s*(?:[-–]|\\s+to\\s+)\\s*(${DAY_ABBREV_RE})(?:\\s|$|,)`, "i"))
+    : null;
   if (dayRangeMatch) {
     const startDay = DAY_NAMES.indexOf(dayRangeMatch[1].toLowerCase());
     const endDay = DAY_NAMES.indexOf(dayRangeMatch[2].toLowerCase());
     if (startDay >= 0 && endDay >= 0) {
+      recurringDays = [];
+      let d = startDay;
+      while (true) {
+        recurringDays.push(d);
+        if (d === endDay) break;
+        d = (d + 1) % 7;
+      }
+    }
+  } else if (abbrevMatch) {
+    const startDay = DAY_ABBREV_MAP[abbrevMatch[1].toLowerCase()];
+    const endDay = DAY_ABBREV_MAP[abbrevMatch[2].toLowerCase()];
+    if (startDay !== undefined && endDay !== undefined) {
       recurringDays = [];
       let d = startDay;
       while (true) {
@@ -381,8 +409,9 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
     // Strip single times ("9am", "at 3pm")
     .replace(/\b(at|for|on|from|to)\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, "")
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, "")
-    // Strip day range ("monday to fridays")
+    // Strip day range ("monday to fridays", "m-f", "t to f")
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\s*(?:to|through|-)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/gi, "")
+    .replace(new RegExp(`(?:^|\\s)(${DAY_ABBREV_RE})\\s*(?:[-–]|\\s+to\\s+)\\s*(${DAY_ABBREV_RE})(?=\\s|$|,)`, "gi"), " ")
     .replace(/\bweekdays?\b/gi, "")
     // Strip individual day names and date words
     .replace(/\b(tomorrow|today|next\s+\w+day)\b/gi, "")
