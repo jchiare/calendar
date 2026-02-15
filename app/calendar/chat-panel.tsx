@@ -11,6 +11,7 @@ type ChatMessage = {
   content: string;
   proposal?: EventProposal;
   proposals?: EventProposal[];
+  recurrenceId?: string;
   status?: "pending" | "confirmed" | "tweaking";
 };
 
@@ -63,7 +64,7 @@ function ConfirmationCard({
 }: {
   message: ChatMessage;
   onConfirm: (proposal: EventProposal) => void;
-  onBatchConfirm: (proposals: EventProposal[]) => void;
+  onBatchConfirm: (proposals: EventProposal[], recurrenceId?: string) => void;
   onTweak: (messageId: string) => void;
   onCancelTweak: (messageId: string) => void;
   onSaveTweak: (messageId: string, proposal: EventProposal) => void;
@@ -268,7 +269,7 @@ function ConfirmationCard({
           </button>
         )}
         <button
-          onClick={() => isBatch ? onBatchConfirm(message.proposals!) : onConfirm(proposal)}
+          onClick={() => isBatch ? onBatchConfirm(message.proposals!, message.recurrenceId) : onConfirm(proposal)}
           className={`cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 ${isBatch ? "ml-auto" : ""}`}
         >
           {isBatch ? `Add ${message.proposals!.length} events` : "Add"}
@@ -334,6 +335,7 @@ export default function ChatPanel({
           content: response.message,
           proposal: response.proposal,
           proposals: response.proposals,
+          recurrenceId: response.recurrenceId,
           status: response.type === "create_event" || response.type === "create_events" ? "pending" : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
@@ -399,7 +401,7 @@ export default function ChatPanel({
   );
 
   const handleBatchConfirm = useCallback(
-    async (proposals: EventProposal[]) => {
+    async (proposals: EventProposal[], recurrenceId?: string) => {
       try {
         await batchCreateEvents({
           events: proposals.map((p) => ({
@@ -409,6 +411,7 @@ export default function ChatPanel({
             location: p.location,
             description: p.description,
           })),
+          recurrenceId,
         });
 
         // Update the message status to confirmed

@@ -83,6 +83,7 @@ function EventModal({
   onClose,
   onSave,
   onDelete,
+  onDeleteFutureRecurring,
   initialData,
   selectedDate,
   selectedStartTime,
@@ -92,6 +93,7 @@ function EventModal({
   onClose: () => void;
   onSave: (data: EventFormData) => Promise<void>;
   onDelete?: () => Promise<void>;
+  onDeleteFutureRecurring?: () => Promise<void>;
   initialData?: EventData;
   selectedDate?: Date;
   selectedStartTime?: string;
@@ -107,6 +109,7 @@ function EventModal({
   });
   const [isSaving, setIsSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const isRecurring = !!initialData?.recurrence;
 
   useEffect(() => {
     if (initialData) {
@@ -280,24 +283,67 @@ function EventModal({
                 </button>
               )}
               {onDelete && showDeleteConfirm && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-red-600">Are you sure?</span>
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    disabled={isSaving}
-                    className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteConfirm(false)}
-                    disabled={isSaving}
-                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
+                <div className="flex flex-col gap-2">
+                  {isRecurring ? (
+                    <>
+                      <span className="text-xs font-medium text-red-600">Delete which events?</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleDelete}
+                          disabled={isSaving}
+                          className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
+                        >
+                          Just this one
+                        </button>
+                        {onDeleteFutureRecurring && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setIsSaving(true);
+                              try {
+                                await onDeleteFutureRecurring();
+                              } finally {
+                                setIsSaving(false);
+                              }
+                            }}
+                            disabled={isSaving}
+                            className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
+                          >
+                            This & future
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowDeleteConfirm(false)}
+                          disabled={isSaving}
+                          className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-red-600">Are you sure?</span>
+                      <button
+                        type="button"
+                        onClick={handleDelete}
+                        disabled={isSaving}
+                        className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(false)}
+                        disabled={isSaving}
+                        className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -382,6 +428,7 @@ export default function CalendarPage() {
   const createEvent = useMutation(api.events.createEvent);
   const updateEvent = useMutation(api.events.updateEvent);
   const deleteEvent = useMutation(api.events.deleteEvent);
+  const deleteRecurringEvents = useMutation(api.events.deleteRecurringEvents);
   const enableAutoDemoSeed =
     process.env.NODE_ENV === "development" &&
     process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true";
@@ -590,6 +637,17 @@ export default function CalendarPage() {
       setEditingEvent(null);
     }
   }, [editingEvent, deleteEvent]);
+
+  const handleDeleteFutureRecurring = useCallback(async () => {
+    if (editingEvent?.recurrence) {
+      await deleteRecurringEvents({
+        recurrenceId: editingEvent.recurrence,
+        fromStart: editingEvent.start,
+      });
+      setModalOpen(false);
+      setEditingEvent(null);
+    }
+  }, [editingEvent, deleteRecurringEvents]);
 
   const openNewEventModal = useCallback((date?: Date, startTime?: string, endTime?: string) => {
     setEditingEvent(null);
@@ -1237,6 +1295,7 @@ export default function CalendarPage() {
         }}
         onSave={handleSaveEvent}
         onDelete={editingEvent ? handleDeleteEvent : undefined}
+        onDeleteFutureRecurring={editingEvent?.recurrence ? handleDeleteFutureRecurring : undefined}
         initialData={editingEvent || undefined}
         selectedDate={selectedDate}
         selectedStartTime={selectedStartTime}

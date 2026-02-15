@@ -163,6 +163,7 @@ export const batchCreateEvents = mutation({
         location: v.optional(v.string()),
       })
     ),
+    recurrenceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Validate all events
@@ -207,6 +208,7 @@ export const batchCreateEvents = mutation({
           start: event.start,
           end: event.end,
           location: event.location,
+          recurrence: args.recurrenceId,
           updatedAt: now,
           createdAt: now,
         })
@@ -221,6 +223,27 @@ export const deleteEvent = mutation({
   },
   handler: async (ctx, args) => {
     await ctx.db.delete(args.id);
+  }
+});
+
+export const deleteRecurringEvents = mutation({
+  args: {
+    recurrenceId: v.string(),
+    fromStart: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Find all events with this recurrenceId that start at or after fromStart
+    const allEvents = await ctx.db
+      .query("events")
+      .withIndex("by_start", (q) => q.gte("start", args.fromStart))
+      .collect();
+
+    const toDelete = allEvents.filter(
+      (e) => e.recurrence === args.recurrenceId
+    );
+
+    await Promise.all(toDelete.map((e) => ctx.db.delete(e._id)));
+    return { deleted: toDelete.length };
   }
 });
 

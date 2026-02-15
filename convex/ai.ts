@@ -19,6 +19,7 @@ export type AIResponse = {
   message: string;
   proposal?: EventProposal;
   proposals?: EventProposal[];
+  recurrenceId?: string;
 };
 
 export const processMessage = action({
@@ -270,7 +271,7 @@ function parseTime(hourStr: string, minuteStr: string | undefined, meridiemStr: 
 }
 
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-const RECURRING_WEEKS = 4;
+const RECURRING_WEEKS = 8;
 
 // Regex fallback when no API key is configured
 function regexFallback(message: string, tzOffset: number): AIResponse {
@@ -427,13 +428,16 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
       return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
     };
 
-    const msg = `${dayRange} ${fmtHr(startHour, startMinute)}–${fmtHr(endHour, endMinute)} · ${durationLabel} · ${RECURRING_WEEKS} weeks (${proposals.length} events)`;
+    const recurrenceId = `recurring-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const msg = `Got it! I'll add ${title} every ${dayRange}, ${fmtHr(startHour, startMinute)}–${fmtHr(endHour, endMinute)} for ${RECURRING_WEEKS} weeks (${proposals.length} events). You can delete any single one later, or remove all future ones at once.`;
 
     return {
       type: "create_events",
       message: msg,
       proposal: proposals[0],
       proposals,
+      recurrenceId,
     };
   }
 
