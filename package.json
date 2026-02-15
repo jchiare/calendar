@@ -3,16 +3,23 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.13.0 <25"
+  },
   "scripts": {
     "dev": "next dev",
+    "convex:dev": "convex dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "convex": "^1.31.7",
     "next": "16.1.6",
+    "openai": "^6.18.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },

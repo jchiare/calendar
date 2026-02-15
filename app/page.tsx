@@ -4,15 +4,6 @@ import Link from "next/link";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 
-type EventData = {
-  _id: string;
-  title: string;
-  description?: string;
-  start: number;
-  end: number;
-  location?: string;
-};
-
 const integrations = [
   "Google Calendar",
   "Gmail",
@@ -35,13 +26,10 @@ function formatTime(timestamp: number): string {
 }
 
 export default function HomePage() {
-  const hasConvexUrl = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
   const welcome = useQuery(api.notes.getWelcome);
-  const todayEvents = useQuery(api.events.getTodayEvents) as EventData[] | undefined;
+  const todayEvents = useQuery(api.events.getTodayEvents);
 
-  const welcomeMessage = hasConvexUrl
-    ? welcome?.message ?? "Connecting to Convex..."
-    : "Set NEXT_PUBLIC_CONVEX_URL to fetch live data.";
+  const welcomeMessage = welcome?.message ?? "Connecting to Convex...";
 
   const isLoading = todayEvents === undefined;
   const hasEvents = todayEvents && todayEvents.length > 0;
@@ -146,15 +134,9 @@ export default function HomePage() {
               <div className="rounded-3xl border border-indigo-100 bg-white p-6 shadow-sm">
                 <h3 className="text-lg font-semibold text-slate-900">Convex connection</h3>
                 <p className="mt-2 text-sm text-slate-600">{welcomeMessage}</p>
-                {hasConvexUrl ? (
-                  <p className="mt-2 text-xs text-emerald-600 font-medium">
-                    Connected and ready
-                  </p>
-                ) : (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Configure <span className="font-semibold">NEXT_PUBLIC_CONVEX_URL</span> to connect.
-                  </p>
-                )}
+                <p className="mt-2 text-xs text-emerald-600 font-medium">
+                  Connected and ready
+                </p>
               </div>
               <div className="rounded-3xl bg-white p-6 shadow-lg shadow-indigo-100">
                 <h3 className="text-lg font-semibold text-slate-900">AI chat highlights</h3>

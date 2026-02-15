@@ -9,6 +9,8 @@
  */
 
 import type * as ai from "../ai.js";
+import type * as aiMutations from "../aiMutations.js";
+import type * as eventValidation from "../eventValidation.js";
 import type * as events from "../events.js";
 import type * as notes from "../notes.js";
 
@@ -20,6 +22,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   ai: typeof ai;
+  aiMutations: typeof aiMutations;
+  eventValidation: typeof eventValidation;
   events: typeof events;
   notes: typeof notes;
 }>;

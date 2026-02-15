@@ -1,35 +1,85 @@
-import { mutationGeneric, queryGeneric } from "convex/server";
+import { query, mutation } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { MAX_EVENT_DURATION_MS, validateEvent } from "./eventValidation";
 
-export const getWeekEvents = queryGeneric({
+async function getEventsOverlappingRange(
+  ctx: QueryCtx,
+  rangeStart: number,
+  rangeEnd: number
+) {
+  const earliestRelevantStart = rangeStart - MAX_EVENT_DURATION_MS;
+  const candidates = await ctx.db
+    .query("events")
+    .withIndex("by_start", (q) =>
+      q.gte("start", earliestRelevantStart).lt("start", rangeEnd)
+    )
+    .collect();
+
+  return candidates
+    .filter((event) => event.end > rangeStart)
+    .sort((a, b) => a.start - b.start);
+}
+
+export const getWeekEvents = query({
   args: {
     weekStart: v.number()
   },
-  handler: async (ctx: any, args: { weekStart: number }) => {
+  handler: async (ctx, args) => {
     const start = args.weekStart;
     const end = start + 7 * 24 * 60 * 60 * 1000;
-
-    const events = await ctx.db.query("events").collect();
-    return events.filter((e: any) => e.start >= start && e.start < end);
+    return getEventsOverlappingRange(ctx, start, end);
   }
 });
 
-export const getTodayEvents = queryGeneric({
+export const getTodayEvents = query({
   args: {},
-  handler: async (ctx: any) => {
+  handler: async (ctx) => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     const start = now.getTime();
     const end = start + 24 * 60 * 60 * 1000;
-
-    const events = await ctx.db.query("events").collect();
-    return events
-      .filter((e: any) => e.start >= start && e.start < end)
-      .sort((a: any, b: any) => a.start - b.start);
+    return getEventsOverlappingRange(ctx, start, end);
   }
 });
 
-export const createEvent = mutationGeneric({
+export const getStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const memberships = await ctx.db.query("memberships").collect();
+    const uniqueUserIds = new Set(memberships.map((m) => m.userId));
+
+    const calendars = await ctx.db.query("calendars").collect();
+
+    // Count overlapping events for today
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const todayStart = now.getTime();
+    const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+    const todayEvents = await getEventsOverlappingRange(
+      ctx,
+      todayStart,
+      todayEnd
+    );
+
+    let conflicts = 0;
+    for (let i = 0; i < todayEvents.length; i++) {
+      for (let j = i + 1; j < todayEvents.length; j++) {
+        if (todayEvents[i].end > todayEvents[j].start) {
+          conflicts++;
+        }
+      }
+    }
+
+    return [
+      { label: "Active family members", value: String(uniqueUserIds.size) },
+      { label: "Connected calendars", value: String(calendars.length) },
+      { label: "Pending conflicts", value: String(conflicts) }
+    ];
+  }
+});
+
+export const createEvent = mutation({
   args: {
     title: v.string(),
     description: v.optional(v.string()),
@@ -37,7 +87,9 @@ export const createEvent = mutationGeneric({
     end: v.number(),
     location: v.optional(v.string())
   },
-  handler: async (ctx: any, args: any) => {
+  handler: async (ctx, args) => {
+    validateEvent(args);
+
     // Get or create a default calendar
     let calendar = await ctx.db.query("calendars").first();
 
@@ -81,7 +133,7 @@ export const createEvent = mutationGeneric({
   }
 });
 
-export const updateEvent = mutationGeneric({
+export const updateEvent = mutation({
   args: {
     id: v.id("events"),
     title: v.string(),
@@ -90,7 +142,8 @@ export const updateEvent = mutationGeneric({
     end: v.number(),
     location: v.optional(v.string())
   },
-  handler: async (ctx: any, args: any) => {
+  handler: async (ctx, args) => {
+    validateEvent(args);
     const { id, ...updates } = args;
     await ctx.db.patch(id, {
       ...updates,
@@ -99,18 +152,18 @@ export const updateEvent = mutationGeneric({
   }
 });
 
-export const deleteEvent = mutationGeneric({
+export const deleteEvent = mutation({
   args: {
     id: v.id("events")
   },
-  handler: async (ctx: any, args: any) => {
+  handler: async (ctx, args) => {
     await ctx.db.delete(args.id);
   }
 });
 
-export const seedDemo = mutationGeneric({
+export const seedDemo = mutation({
   args: {},
-  handler: async (ctx: any) => {
+  handler: async (ctx) => {
     const existing = await ctx.db.query("events").first();
     if (existing) {
       return { seeded: false };

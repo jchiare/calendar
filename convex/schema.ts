@@ -59,7 +59,9 @@ export default defineSchema({
     metadata: v.optional(v.any()),
     updatedAt: v.number(),
     createdAt: v.number()
-  }).index("by_calendar", ["calendarId"]),
+  })
+    .index("by_calendar", ["calendarId"])
+    .index("by_start", ["start"]),
   integrations: defineTable({
     workspaceId: v.id("workspaces"),
     provider: v.string(),

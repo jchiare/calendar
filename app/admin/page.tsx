@@ -1,14 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation } from "convex/react";
+import { useEffect, useRef, useState } from "react";
+import { useAction, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-
-const stats = [
-  { label: "Active family members", value: "4" },
-  { label: "Connected calendars", value: "2" },
-  { label: "Pending conflicts", value: "3" }
-];
 
 const aiTopics = [
   {
@@ -40,8 +34,15 @@ export default function AdminPage() {
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const processMessage = useMutation(api.ai.processMessage);
+  const stats = useQuery(api.events.getStats);
+  const processMessage = useAction(api.ai.processMessage);
+
+  // Auto-scroll chat to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
 
   const handleSend = async (messageText?: string) => {
     const text = messageText || inputValue.trim();
@@ -95,12 +96,21 @@ export default function AdminPage() {
       </div>
 
       <section className="mt-8 grid gap-4 md:grid-cols-3">
-        {stats.map((stat) => (
-          <div key={stat.label} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-slate-500">{stat.label}</p>
-            <p className="mt-3 text-3xl font-semibold text-slate-900">{stat.value}</p>
-          </div>
-        ))}
+        {stats ? (
+          stats.map((stat) => (
+            <div key={stat.label} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-sm text-slate-500">{stat.label}</p>
+              <p className="mt-3 text-3xl font-semibold text-slate-900">{stat.value}</p>
+            </div>
+          ))
+        ) : (
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm animate-pulse">
+              <div className="h-4 w-32 rounded bg-slate-200" />
+              <div className="mt-3 h-9 w-12 rounded bg-slate-200" />
+            </div>
+          ))
+        )}
       </section>
 
       <section className="mt-8 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
@@ -147,7 +157,7 @@ export default function AdminPage() {
 
           {/* Chat messages */}
           {messages.length > 0 && (
-            <div className="flex-1 space-y-3 overflow-y-auto rounded-2xl border border-indigo-200 bg-white p-4">
+            <div className="flex-1 space-y-3 overflow-y-auto rounded-2xl border border-indigo-200 bg-white p-4 max-h-80">
               {messages.map((msg, idx) => (
                 <div
                   key={idx}
@@ -165,6 +175,7 @@ export default function AdminPage() {
                   Thinking...
                 </div>
               )}
+              <div ref={messagesEndRef} />
             </div>
           )}
 
