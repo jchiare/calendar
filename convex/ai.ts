@@ -80,98 +80,93 @@ SMART PARSING:
 
 Keep your responses very short and friendly. Don't be overly formal.`;
 
-      // Build message history for multi-turn context
-      const messages: OpenAI.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemPrompt },
-      ];
+      // Build input items for multi-turn context
+      const input: OpenAI.Responses.ResponseInputItem[] = [];
       if (args.conversationHistory) {
         for (const msg of args.conversationHistory) {
           if (msg.role === "user" || msg.role === "assistant") {
-            messages.push({
+            input.push({
+              type: "message",
               role: msg.role as "user" | "assistant",
               content: msg.content,
             });
           }
         }
       }
-      messages.push({ role: "user", content: args.message });
+      input.push({ type: "message", role: "user", content: args.message });
 
-      const tools: OpenAI.ChatCompletionTool[] = [
+      const tools: OpenAI.Responses.Tool[] = [
         {
           type: "function",
-          function: {
-            name: "create_event",
-            description:
-              "Create a calendar event. Returns a proposal for user confirmation.",
-            parameters: {
-              type: "object",
-              properties: {
-                title: {
-                  type: "string",
-                  description:
-                    "Event title, properly capitalized (e.g., 'Coffee with George')",
-                },
-                date: {
-                  type: "string",
-                  description: "Date in YYYY-MM-DD format",
-                },
-                startHour: {
-                  type: "number",
-                  description: "Start hour in 24h format (0-23)",
-                },
-                startMinute: {
-                  type: "number",
-                  description: "Start minute (0-59)",
-                },
-                durationMinutes: {
-                  type: "number",
-                  description:
-                    "Duration in minutes, inferred from event type",
-                },
-                location: {
-                  type: "string",
-                  description:
-                    "Location if mentioned (e.g., 'Blue Bottle')",
-                },
-                attendees: {
-                  type: "array",
-                  items: { type: "string" },
-                  description:
-                    "Names of people mentioned (e.g., ['George'])",
-                },
-                description: {
-                  type: "string",
-                  description: "Optional notes or description",
-                },
+          name: "create_event",
+          description:
+            "Create a calendar event. Returns a proposal for user confirmation.",
+          parameters: {
+            type: "object",
+            properties: {
+              title: {
+                type: "string",
+                description:
+                  "Event title, properly capitalized (e.g., 'Coffee with George')",
               },
-              required: [
-                "title",
-                "date",
-                "startHour",
-                "startMinute",
-                "durationMinutes",
-              ],
+              date: {
+                type: "string",
+                description: "Date in YYYY-MM-DD format",
+              },
+              startHour: {
+                type: "number",
+                description: "Start hour in 24h format (0-23)",
+              },
+              startMinute: {
+                type: "number",
+                description: "Start minute (0-59)",
+              },
+              durationMinutes: {
+                type: "number",
+                description:
+                  "Duration in minutes, inferred from event type",
+              },
+              location: {
+                type: "string",
+                description:
+                  "Location if mentioned (e.g., 'Blue Bottle')",
+              },
+              attendees: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "Names of people mentioned (e.g., ['George'])",
+              },
+              description: {
+                type: "string",
+                description: "Optional notes or description",
+              },
             },
+            required: [
+              "title",
+              "date",
+              "startHour",
+              "startMinute",
+              "durationMinutes",
+            ],
+            additionalProperties: false,
           },
+          strict: true,
         },
       ];
 
-      const response = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages,
+      const response = await client.responses.create({
+        model: "gpt-5.2",
+        instructions: systemPrompt,
+        input,
         tools,
+        store: false,
       });
 
-      const choice = response.choices[0];
-      if (!choice?.message) {
-        return regexFallback(args.message);
-      }
-
-      // Check for tool calls
-      if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
-        const toolCall = choice.message.tool_calls[0];
-        if (toolCall.type === "function" && toolCall.function.name === "create_event") {
-          const input = JSON.parse(toolCall.function.arguments) as {
+      // Process output items
+      for (const item of response.output) {
+        if (item.type === "function_call" && item.name === "create_event") {
+          const parsedArgs = JSON.parse(item.arguments) as {
             title: string;
             date: string;
             startHour: number;
@@ -182,27 +177,27 @@ Keep your responses very short and friendly. Don't be overly formal.`;
             description?: string;
           };
 
-          const [year, month, day] = input.date.split("-").map(Number);
+          const [year, month, day] = parsedArgs.date.split("-").map(Number);
           const startDate = new Date(
             year,
             month - 1,
             day,
-            input.startHour,
-            input.startMinute,
+            parsedArgs.startHour,
+            parsedArgs.startMinute,
             0,
             0
           );
           const endDate = new Date(
-            startDate.getTime() + input.durationMinutes * 60 * 1000
+            startDate.getTime() + parsedArgs.durationMinutes * 60 * 1000
           );
 
           const proposal: EventProposal = {
-            title: input.title,
+            title: parsedArgs.title,
             start: startDate.getTime(),
             end: endDate.getTime(),
-            location: input.location,
-            attendees: input.attendees,
-            description: input.description,
+            location: parsedArgs.location,
+            attendees: parsedArgs.attendees,
+            description: parsedArgs.description,
           };
 
           // Build a friendly message
@@ -223,13 +218,13 @@ Keep your responses very short and friendly. Don't be overly formal.`;
           });
 
           const durationLabel =
-            input.durationMinutes >= 60
-              ? `${input.durationMinutes / 60}hr`
-              : `${input.durationMinutes} min`;
+            parsedArgs.durationMinutes >= 60
+              ? `${parsedArgs.durationMinutes / 60}hr`
+              : `${parsedArgs.durationMinutes} min`;
 
           let message = `${dateStr} ${timeStr}–${endTimeStr} · ${durationLabel}`;
-          if (input.location) {
-            message += ` · ${input.location}`;
+          if (parsedArgs.location) {
+            message += ` · ${parsedArgs.location}`;
           }
 
           return {
@@ -241,10 +236,10 @@ Keep your responses very short and friendly. Don't be overly formal.`;
       }
 
       // Plain text response
-      if (choice.message.content) {
+      if (response.output_text) {
         return {
           type: "message",
-          message: choice.message.content,
+          message: response.output_text,
         };
       }
 
