@@ -181,7 +181,13 @@ function ConfirmationCard({
             />
           </div>
         </div>
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            onClick={() => onCancelTweak(message.id)}
+            className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
           <button
             onClick={() => {
               const [year, month, day] = tweakData.date
@@ -203,12 +209,6 @@ function ConfirmationCard({
             className="cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
           >
             Save
-          </button>
-          <button
-            onClick={() => onCancelTweak(message.id)}
-            className="cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-          >
-            Cancel
           </button>
         </div>
       </div>

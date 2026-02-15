@@ -367,7 +367,8 @@ function regexFallback(message: string, tzOffset: number): AIResponse {
     .trim();
 
   if (title.length < 3) title = "New event";
-  title = title.charAt(0).toUpperCase() + title.slice(1);
+  // Title-case each word (e.g. "speech therapy ellie" → "Speech Therapy Ellie")
+  title = title.replace(/\b\w/g, (c) => c.toUpperCase());
 
   // Build timestamp in UTC, then shift by user's timezone offset
   const startMs = Date.UTC(eventYear, eventMonth, eventDay, hour, minute)
