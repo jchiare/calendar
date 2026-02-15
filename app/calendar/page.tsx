@@ -1,21 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import type { Doc } from "../../convex/_generated/dataModel";
 
-// Generic ID type since we don't have generated dataModel
-type Id<T extends string> = string & { __tableName: T };
-
-type EventData = {
-  _id: Id<"events">;
-  title: string;
-  description?: string;
-  start: number;
-  end: number;
-  location?: string;
-};
+type EventData = Doc<"events">;
 
 type EventFormData = {
   title: string;
@@ -72,11 +62,6 @@ function formatTimeSlot(hour: number): string {
   if (hour === 0) return "12 AM";
   if (hour === 12) return "12 PM";
   return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
-}
-
-function parseTimeToHours(time: string): number {
-  const [hours, minutes] = time.split(":").map(Number);
-  return hours + minutes / 60;
 }
 
 function snapToTimeIncrement(hours: number): number {
@@ -383,18 +368,23 @@ export default function CalendarPage() {
 
   const events = useQuery(api.events.getWeekEvents, {
     weekStart: currentWeekStart.getTime()
-  }) as EventData[] | undefined;
+  });
   const seedDemo = useMutation(api.events.seedDemo);
   const createEvent = useMutation(api.events.createEvent);
   const updateEvent = useMutation(api.events.updateEvent);
   const deleteEvent = useMutation(api.events.deleteEvent);
+  const enableAutoDemoSeed =
+    process.env.NODE_ENV === "development" &&
+    process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true";
 
   useEffect(() => {
+    if (!enableAutoDemoSeed) return;
+
     if (events && events.length === 0 && !seededRef.current) {
       seededRef.current = true;
       void seedDemo();
     }
-  }, [events, seedDemo]);
+  }, [enableAutoDemoSeed, events, seedDemo]);
 
   const days = useMemo(() => {
     const formatter = new Intl.DateTimeFormat("en-US", {
@@ -790,13 +780,11 @@ export default function CalendarPage() {
       // Move existing event
       const eventInfo = eventDragInfoRef.current;
       const timeDiff = dragCurrentInfo.time - dragStartInfo.time;
-      const dayDiff = dragCurrentInfo.dayIndex - eventInfo.dayIndex;
 
       const newStartTime = eventInfo.originalStart + timeDiff;
       const newEndTime = eventInfo.originalEnd + timeDiff;
 
       // Calculate new date
-      const originalDate = new Date(eventInfo.event.start);
       const newDate = new Date(currentWeekStart);
       newDate.setDate(currentWeekStart.getDate() + dragCurrentInfo.dayIndex);
 

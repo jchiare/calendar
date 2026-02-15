@@ -227,8 +227,12 @@ If no end time is specified, default to 1 hour after start. If no time is specif
 
       if (parsed.action === 'create' && parsed.title && parsed.date) {
         const [year, month, day] = parsed.date.split('-').map(Number);
-        const startDate = new Date(year, month - 1, day, parsed.startHour || 12, parsed.startMinute || 0, 0, 0);
-        const endDate = new Date(year, month - 1, day, parsed.endHour || (parsed.startHour || 12) + 1, parsed.endMinute || 0, 0, 0);
+        const startHour = parsed.startHour ?? 12;
+        const startMinute = parsed.startMinute ?? 0;
+        const endHour = parsed.endHour ?? startHour + 1;
+        const endMinute = parsed.endMinute ?? 0;
+        const startDate = new Date(year, month - 1, day, startHour, startMinute, 0, 0);
+        const endDate = new Date(year, month - 1, day, endHour, endMinute, 0, 0);
 
         const start = startDate.getTime();
         const end = endDate.getTime();

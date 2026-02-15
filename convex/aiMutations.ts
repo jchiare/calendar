@@ -1,5 +1,6 @@
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { validateEvent } from "./eventValidation";
 
 export const createEventFromAI = internalMutation({
   args: {
@@ -9,6 +10,8 @@ export const createEventFromAI = internalMutation({
     end: v.number(),
   },
   handler: async (ctx, args) => {
+    validateEvent(args);
+
     let calendar = await ctx.db.query("calendars").first();
 
     if (!calendar) {

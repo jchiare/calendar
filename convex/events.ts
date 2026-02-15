@@ -1,17 +1,24 @@
 import { query, mutation } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { MAX_EVENT_DURATION_MS, validateEvent } from "./eventValidation";
 
-function validateEvent(args: { title: string; start: number; end: number }) {
-  if (!args.title.trim()) {
-    throw new Error("Title cannot be empty");
-  }
-  if (args.end <= args.start) {
-    throw new Error("End time must be after start time");
-  }
-  const twentyFourHours = 24 * 60 * 60 * 1000;
-  if (args.end - args.start > twentyFourHours) {
-    throw new Error("Event duration cannot exceed 24 hours");
-  }
+async function getEventsOverlappingRange(
+  ctx: QueryCtx,
+  rangeStart: number,
+  rangeEnd: number
+) {
+  const earliestRelevantStart = rangeStart - MAX_EVENT_DURATION_MS;
+  const candidates = await ctx.db
+    .query("events")
+    .withIndex("by_start", (q) =>
+      q.gte("start", earliestRelevantStart).lt("start", rangeEnd)
+    )
+    .collect();
+
+  return candidates
+    .filter((event) => event.end > rangeStart)
+    .sort((a, b) => a.start - b.start);
 }
 
 export const getWeekEvents = query({
@@ -21,11 +28,7 @@ export const getWeekEvents = query({
   handler: async (ctx, args) => {
     const start = args.weekStart;
     const end = start + 7 * 24 * 60 * 60 * 1000;
-
-    return await ctx.db
-      .query("events")
-      .withIndex("by_start", (q) => q.gte("start", start).lt("start", end))
-      .collect();
+    return getEventsOverlappingRange(ctx, start, end);
   }
 });
 
@@ -36,12 +39,7 @@ export const getTodayEvents = query({
     now.setHours(0, 0, 0, 0);
     const start = now.getTime();
     const end = start + 24 * 60 * 60 * 1000;
-
-    const events = await ctx.db
-      .query("events")
-      .withIndex("by_start", (q) => q.gte("start", start).lt("start", end))
-      .collect();
-    return events.sort((a, b) => a.start - b.start);
+    return getEventsOverlappingRange(ctx, start, end);
   }
 });
 
@@ -58,13 +56,11 @@ export const getStats = query({
     now.setHours(0, 0, 0, 0);
     const todayStart = now.getTime();
     const todayEnd = todayStart + 24 * 60 * 60 * 1000;
-
-    const todayEvents = await ctx.db
-      .query("events")
-      .withIndex("by_start", (q) =>
-        q.gte("start", todayStart).lt("start", todayEnd)
-      )
-      .collect();
+    const todayEvents = await getEventsOverlappingRange(
+      ctx,
+      todayStart,
+      todayEnd
+    );
 
     let conflicts = 0;
     for (let i = 0; i < todayEvents.length; i++) {
