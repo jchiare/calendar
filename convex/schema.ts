@@ -6,6 +6,8 @@ export default defineSchema({
     name: v.string(),
     email: v.string(),
     timezone: v.string(),
+    color: v.optional(v.string()),
+    avatarEmoji: v.optional(v.string()),
     preferences: v.optional(
       v.object({
         weekStart: v.optional(v.string()),
@@ -55,6 +57,7 @@ export default defineSchema({
         })
       )
     ),
+    createdBy: v.optional(v.id("users")),
     recurrence: v.optional(v.string()),
     metadata: v.optional(v.any()),
     updatedAt: v.number(),

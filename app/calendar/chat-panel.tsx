@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
 import type { AIResponse, EventProposal } from "../../convex/ai";
 
 type ChatMessage = {
@@ -534,10 +535,22 @@ function ConfirmationCard({
   );
 }
 
+type HouseholdMember = {
+  _id: Id<"users">;
+  name: string;
+  color: string;
+  avatarEmoji?: string;
+  role: string;
+};
+
 export default function ChatPanel({
   onGhostEventChange,
+  activeMemberId,
+  members,
 }: {
   onGhostEventChange: (ghost: GhostEvent | null) => void;
+  activeMemberId?: Id<"users"> | null;
+  members?: HouseholdMember[];
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -649,6 +662,7 @@ export default function ChatPanel({
           end: proposal.end,
           location: proposal.location,
           description: proposal.description,
+          createdBy: activeMemberId ?? undefined,
         });
 
         // Update the message status to confirmed
@@ -671,7 +685,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [createEvent, onGhostEventChange]
+    [createEvent, onGhostEventChange, activeMemberId]
   );
 
   const handleBatchConfirm = useCallback(
@@ -690,6 +704,7 @@ export default function ChatPanel({
             description: p.description,
           })),
           recurrenceId,
+          createdBy: activeMemberId ?? undefined,
         });
 
         // Update the message status to confirmed
@@ -717,7 +732,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [batchCreateEvents, onGhostEventChange]
+    [batchCreateEvents, onGhostEventChange, activeMemberId]
   );
 
   const handleTweak = useCallback((messageId: string) => {
@@ -745,6 +760,7 @@ export default function ChatPanel({
           end: updatedProposal.end,
           location: updatedProposal.location,
           description: updatedProposal.description,
+          createdBy: activeMemberId ?? undefined,
         });
 
         setMessages((prev) =>
@@ -767,7 +783,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [createEvent, onGhostEventChange]
+    [createEvent, onGhostEventChange, activeMemberId]
   );
 
   const handleKeyDown = useCallback(
@@ -898,7 +914,14 @@ export default function ChatPanel({
             </svg>
           </button>
         </div>
-        <p className="mt-1.5 text-[11px] text-slate-400">Enter to send, Shift+Enter for a new line.</p>
+        {activeMemberId && members && (
+          <p className="mt-1.5 text-[11px] text-slate-400">
+            Creating as <span className="font-medium text-slate-600">{members.find((m) => m._id === activeMemberId)?.name}</span>
+          </p>
+        )}
+        {!activeMemberId && (
+          <p className="mt-1.5 text-[11px] text-slate-400">Enter to send, Shift+Enter for a new line.</p>
+        )}
       </div>
     </div>
   );

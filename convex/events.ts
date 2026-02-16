@@ -28,7 +28,21 @@ export const getWeekEvents = query({
   handler: async (ctx, args) => {
     const start = args.weekStart;
     const end = start + 7 * 24 * 60 * 60 * 1000;
-    return getEventsOverlappingRange(ctx, start, end);
+    const events = await getEventsOverlappingRange(ctx, start, end);
+
+    // Enrich events with creator info for color coding
+    const enriched = await Promise.all(
+      events.map(async (event) => {
+        if (!event.createdBy) return { ...event, creatorColor: null, creatorName: null };
+        const user = await ctx.db.get(event.createdBy);
+        return {
+          ...event,
+          creatorColor: user?.color ?? null,
+          creatorName: user?.name ?? null,
+        };
+      })
+    );
+    return enriched;
   }
 });
 
@@ -85,7 +99,8 @@ export const createEvent = mutation({
     description: v.optional(v.string()),
     start: v.number(),
     end: v.number(),
-    location: v.optional(v.string())
+    location: v.optional(v.string()),
+    createdBy: v.optional(v.id("users"))
   },
   handler: async (ctx, args) => {
     validateEvent(args);
@@ -127,6 +142,7 @@ export const createEvent = mutation({
       start: args.start,
       end: args.end,
       location: args.location,
+      createdBy: args.createdBy,
       updatedAt: now,
       createdAt: now
     });
@@ -164,6 +180,7 @@ export const batchCreateEvents = mutation({
       })
     ),
     recurrenceId: v.optional(v.string()),
+    createdBy: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     // Validate all events
@@ -208,6 +225,7 @@ export const batchCreateEvents = mutation({
           start: event.start,
           end: event.end,
           location: event.location,
+          createdBy: args.createdBy,
           recurrence: args.recurrenceId,
           updatedAt: now,
           createdAt: now,
