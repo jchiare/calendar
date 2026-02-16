@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useState, useCallback } from "react";
+import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { useRouter } from "next/navigation";
 
 const MEMBER_COLORS = [
   { name: "indigo", bg: "bg-indigo-500", ring: "ring-indigo-300" },
@@ -25,9 +24,7 @@ type MemberDraft = {
   color: string;
 };
 
-export default function SetupPage() {
-  const router = useRouter();
-  const household = useQuery(api.household.getHousehold);
+export default function HouseholdSetup() {
   const setupHousehold = useMutation(api.household.setupHousehold);
 
   const [step, setStep] = useState<"name" | "members" | "done">("name");
@@ -36,13 +33,6 @@ export default function SetupPage() {
     { id: "1", name: "", emoji: "👤", color: "indigo" },
   ]);
   const [isSaving, setIsSaving] = useState(false);
-
-  // If household already exists, redirect
-  useEffect(() => {
-    if (household !== undefined && household !== null) {
-      router.replace("/calendar");
-    }
-  }, [household, router]);
 
   const addMember = () => {
     const usedColors = new Set(members.map((m) => m.color));
@@ -82,21 +72,12 @@ export default function SetupPage() {
         })),
       });
       setStep("done");
-      // Short delay then redirect
-      setTimeout(() => router.push("/calendar"), 1200);
+      // Convex reactivity will update the layout query automatically —
+      // once getHousehold returns non-null, the layout swaps in the calendar.
     } catch {
       setIsSaving(false);
     }
-  }, [householdName, members, setupHousehold, router]);
-
-  // Loading state or redirect in progress
-  if (household === undefined || household !== null) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
-      </div>
-    );
-  }
+  }, [householdName, members, setupHousehold]);
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-4 py-12">
@@ -167,12 +148,10 @@ export default function SetupPage() {
                   className="flex items-start gap-2 rounded-xl border border-slate-100 bg-slate-50/50 p-3"
                 >
                   {/* Emoji picker */}
-                  <div className="relative">
-                    <EmojiPicker
-                      selected={member.emoji}
-                      onChange={(emoji) => updateMember(member.id, "emoji", emoji)}
-                    />
-                  </div>
+                  <EmojiPicker
+                    selected={member.emoji}
+                    onChange={(emoji) => updateMember(member.id, "emoji", emoji)}
+                  />
 
                   <div className="flex-1 space-y-2">
                     <input
@@ -257,7 +236,7 @@ export default function SetupPage() {
               {householdName} is ready
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Taking you to your calendar...
+              Loading your calendar...
             </p>
           </div>
         )}
