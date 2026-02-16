@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useRouter } from "next/navigation";
@@ -38,10 +38,11 @@ export default function SetupPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   // If household already exists, redirect
-  if (household !== undefined && household !== null) {
-    router.replace("/calendar");
-    return null;
-  }
+  useEffect(() => {
+    if (household !== undefined && household !== null) {
+      router.replace("/calendar");
+    }
+  }, [household, router]);
 
   const addMember = () => {
     const usedColors = new Set(members.map((m) => m.color));
@@ -88,8 +89,8 @@ export default function SetupPage() {
     }
   }, [householdName, members, setupHousehold, router]);
 
-  // Loading state while checking for existing household
-  if (household === undefined) {
+  // Loading state or redirect in progress
+  if (household === undefined || household !== null) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
