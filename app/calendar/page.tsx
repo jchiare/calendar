@@ -78,6 +78,130 @@ function hoursToTimeString(hours: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// Lightweight popover for confirming event deletion.
+// Used both from the hover × button on events AND from the edit modal's trash icon.
+function DeletePopover({
+  event,
+  position,
+  onDeleteSingle,
+  onDeleteFuture,
+  onClose,
+}: {
+  event: EventData;
+  position: { x: number; y: number };
+  onDeleteSingle: () => Promise<void>;
+  onDeleteFuture?: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [isDeleting, setIsDeleting] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const isRecurring = !!event.recurrence;
+
+  // Close on click outside
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    // Close on Escape
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  // Clamp popover to viewport
+  const [adjustedPos, setAdjustedPos] = useState(position);
+  useEffect(() => {
+    if (!popoverRef.current) return;
+    const rect = popoverRef.current.getBoundingClientRect();
+    let { x, y } = position;
+    if (x + rect.width > window.innerWidth - 16) x = window.innerWidth - rect.width - 16;
+    if (y + rect.height > window.innerHeight - 16) y = y - rect.height - 8;
+    if (x < 16) x = 16;
+    if (y < 16) y = 16;
+    setAdjustedPos({ x, y });
+  }, [position]);
+
+  const handleSingle = async () => {
+    setIsDeleting(true);
+    try { await onDeleteSingle(); } finally { setIsDeleting(false); }
+    onClose();
+  };
+  const handleFuture = async () => {
+    if (!onDeleteFuture) return;
+    setIsDeleting(true);
+    try { await onDeleteFuture(); } finally { setIsDeleting(false); }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60]">
+      <div
+        ref={popoverRef}
+        className="fixed w-56 rounded-2xl bg-white p-3 shadow-xl ring-1 ring-slate-200"
+        style={{ left: adjustedPos.x, top: adjustedPos.y }}
+      >
+        <p className="mb-2.5 text-sm font-medium text-slate-900">
+          {isRecurring ? "Delete recurring event" : "Delete this event?"}
+        </p>
+        <div className="flex flex-col gap-1.5">
+          {isRecurring ? (
+            <>
+              <button
+                onClick={handleSingle}
+                disabled={isDeleting}
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Only this event
+              </button>
+              {onDeleteFuture && (
+                <button
+                  onClick={handleFuture}
+                  disabled={isDeleting}
+                  className="flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 cursor-pointer disabled:opacity-50"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  This & all future
+                </button>
+              )}
+            </>
+          ) : (
+            <button
+              onClick={handleSingle}
+              disabled={isDeleting}
+              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 cursor-pointer disabled:opacity-50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            disabled={isDeleting}
+            className="rounded-xl px-3 py-2 text-center text-sm text-slate-500 hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EventModal({
   isOpen,
   onClose,
@@ -108,8 +232,7 @@ function EventModal({
     location: ""
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const isRecurring = !!initialData?.recurrence;
+  const [deletePopoverPos, setDeletePopoverPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (initialData) {
@@ -133,7 +256,7 @@ function EventModal({
         location: ""
       });
     }
-    setShowDeleteConfirm(false);
+    setDeletePopoverPos(null);
   }, [initialData, selectedDate, selectedStartTime, selectedEndTime, isOpen]);
 
   if (!isOpen) return null;
@@ -148,16 +271,6 @@ function EventModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!onDelete) return;
-    setIsSaving(true);
-    try {
-      await onDelete();
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -167,19 +280,38 @@ function EventModal({
         className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
-          aria-label="Close"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-        <h2 className="text-xl font-semibold text-slate-900">
-          {initialData ? "Edit Event" : "New Event"}
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">
+            {initialData ? "Edit Event" : "New Event"}
+          </h2>
+          <div className="flex items-center gap-1">
+            {onDelete && initialData && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  const rect = (e.target as HTMLElement).getBoundingClientRect();
+                  setDeletePopoverPos({ x: rect.left, y: rect.bottom + 8 });
+                }}
+                className="rounded-full p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 cursor-pointer"
+                aria-label="Delete event"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
+              aria-label="Close"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <fieldset disabled={isSaving} className="space-y-4">
           <div>
@@ -270,94 +402,27 @@ function EventModal({
             />
           </div>
           </fieldset>
-          <div className="flex justify-between gap-3 pt-2">
-            <div>
-              {onDelete && !showDeleteConfirm && (
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteConfirm(true)}
-                  disabled={isSaving}
-                  className="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              )}
-              {onDelete && showDeleteConfirm && (
-                <div className="flex flex-col gap-2">
-                  {isRecurring ? (
-                    <>
-                      <span className="text-xs font-medium text-red-600">Delete which events?</span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleDelete}
-                          disabled={isSaving}
-                          className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
-                        >
-                          Just this one
-                        </button>
-                        {onDeleteFutureRecurring && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              setIsSaving(true);
-                              try {
-                                await onDeleteFutureRecurring();
-                              } finally {
-                                setIsSaving(false);
-                              }
-                            }}
-                            disabled={isSaving}
-                            className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
-                          >
-                            This & future
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setShowDeleteConfirm(false)}
-                          disabled={isSaving}
-                          className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-red-600">Are you sure?</span>
-                      <button
-                        type="button"
-                        onClick={handleDelete}
-                        disabled={isSaving}
-                        className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
-                      >
-                        Delete
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowDeleteConfirm(false)}
-                        disabled={isSaving}
-                        className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 cursor-pointer disabled:opacity-50"
-              >
-                {isSaving ? "Saving..." : initialData ? "Save Changes" : "Create Event"}
-              </button>
-            </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 cursor-pointer disabled:opacity-50"
+            >
+              {isSaving ? "Saving..." : initialData ? "Save Changes" : "Create Event"}
+            </button>
           </div>
         </form>
+
+        {/* Delete popover (triggered from trash icon in header) */}
+        {deletePopoverPos && initialData && onDelete && (
+          <DeletePopover
+            event={initialData}
+            position={deletePopoverPos}
+            onDeleteSingle={async () => { await onDelete(); }}
+            onDeleteFuture={onDeleteFutureRecurring}
+            onClose={() => setDeletePopoverPos(null)}
+          />
+        )}
       </div>
     </div>
   );
@@ -383,6 +448,10 @@ export default function CalendarPage() {
     end: number;
     location?: string;
   } | null>(null);
+
+  // Delete popover state (for hover × on events)
+  const [deletePopoverEvent, setDeletePopoverEvent] = useState<EventData | null>(null);
+  const [deletePopoverPos, setDeletePopoverPos] = useState<{ x: number; y: number } | null>(null);
 
   // Current time for the time indicator
   const [currentTime, setCurrentTime] = useState(() => new Date());
@@ -649,6 +718,26 @@ export default function CalendarPage() {
     }
   }, [editingEvent, deleteRecurringEvents]);
 
+  // Delete via the hover × popover (not through the edit modal)
+  const handlePopoverDeleteSingle = useCallback(async () => {
+    if (deletePopoverEvent) {
+      await deleteEvent({ id: deletePopoverEvent._id });
+      setDeletePopoverEvent(null);
+      setDeletePopoverPos(null);
+    }
+  }, [deletePopoverEvent, deleteEvent]);
+
+  const handlePopoverDeleteFuture = useCallback(async () => {
+    if (deletePopoverEvent?.recurrence) {
+      await deleteRecurringEvents({
+        recurrenceId: deletePopoverEvent.recurrence,
+        fromStart: deletePopoverEvent.start,
+      });
+      setDeletePopoverEvent(null);
+      setDeletePopoverPos(null);
+    }
+  }, [deletePopoverEvent, deleteRecurringEvents]);
+
   const openNewEventModal = useCallback((date?: Date, startTime?: string, endTime?: string) => {
     setEditingEvent(null);
     setSelectedDate(date);
@@ -662,6 +751,8 @@ export default function CalendarPage() {
     setSelectedDate(undefined);
     setSelectedStartTime(undefined);
     setSelectedEndTime(undefined);
+    setDeletePopoverEvent(null);
+    setDeletePopoverPos(null);
     setModalOpen(true);
   }, []);
 
@@ -755,8 +846,9 @@ export default function CalendarPage() {
 
   // Handle event move start (from clicking on event body)
   const handleEventMoveStart = useCallback((e: React.MouseEvent, event: EventData) => {
-    // Don't start move if clicking on resize handles
+    // Don't start move if clicking on resize handles or delete button
     if ((e.target as HTMLElement).closest('[data-resize-handle]')) return;
+    if ((e.target as HTMLElement).closest('[data-delete-button]')) return;
 
     e.stopPropagation();
     e.preventDefault();
@@ -1182,6 +1274,25 @@ export default function CalendarPage() {
                             className="absolute inset-x-0 top-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 hover:bg-indigo-300/50"
                           />
 
+                          {/* Quick delete button — appears on hover */}
+                          <button
+                            data-delete-button="true"
+                            onMouseDown={(e) => {
+                              // Stop event from triggering drag/click-to-edit
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              setDeletePopoverEvent(event);
+                              setDeletePopoverPos({ x: rect.right + 4, y: rect.top });
+                            }}
+                            className="absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-white/80 text-slate-400 opacity-0 shadow-sm ring-1 ring-slate-200/60 transition hover:bg-red-50 hover:text-red-500 hover:ring-red-200 group-hover:opacity-100 cursor-pointer"
+                            aria-label="Delete event"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+
                           {/* Event content */}
                           <div className="p-2 pt-2">
                             <p className="truncate text-xs font-semibold text-indigo-900">
@@ -1301,6 +1412,20 @@ export default function CalendarPage() {
         selectedStartTime={selectedStartTime}
         selectedEndTime={selectedEndTime}
       />
+
+      {/* Delete popover from hover × button on events */}
+      {deletePopoverEvent && deletePopoverPos && (
+        <DeletePopover
+          event={deletePopoverEvent}
+          position={deletePopoverPos}
+          onDeleteSingle={handlePopoverDeleteSingle}
+          onDeleteFuture={deletePopoverEvent.recurrence ? handlePopoverDeleteFuture : undefined}
+          onClose={() => {
+            setDeletePopoverEvent(null);
+            setDeletePopoverPos(null);
+          }}
+        />
+      )}
     </main>
   );
 }
