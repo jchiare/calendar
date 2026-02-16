@@ -582,11 +582,11 @@ export default function CalendarPage() {
     return { startHour: minHour, endHour: maxHour, timeSlots: slots };
   }, [events, currentTime]);
 
-  // Position events in the grid
+  // Position events in the grid (with overlap layout)
   const eventPositions = useMemo(() => {
     if (!events) return [];
 
-    return events.map((event) => {
+    const positioned = events.map((event) => {
       const startDate = new Date(event.start);
       const endDate = new Date(event.end);
 
@@ -606,9 +606,102 @@ export default function CalendarPage() {
         top: Math.max(0, top),
         height: Math.min(100 - Math.max(0, top), height),
         startTime: formatTime(startDate),
-        endTime: formatTime(endDate)
+        endTime: formatTime(endDate),
+        startHourNum: eventStartHour,
+        endHourNum: eventEndHour,
+        // overlap layout — defaults, computed below
+        colIndex: 0,
+        colTotal: 1
       };
     });
+
+    // Compute side-by-side columns for overlapping events per day
+    const byDay = new Map<number, typeof positioned>();
+    for (const ev of positioned) {
+      const arr = byDay.get(ev.dayIndex) ?? [];
+      arr.push(ev);
+      byDay.set(ev.dayIndex, arr);
+    }
+
+    for (const dayEvents of byDay.values()) {
+      // Sort by start time, then by longer duration first
+      dayEvents.sort((a, b) => a.startHourNum - b.startHourNum || (b.endHourNum - b.startHourNum) - (a.endHourNum - a.startHourNum));
+
+      // Build overlap groups using a greedy column assignment
+      const columns: typeof dayEvents[] = [];
+      for (const ev of dayEvents) {
+        let placed = false;
+        for (let c = 0; c < columns.length; c++) {
+          const last = columns[c][columns[c].length - 1];
+          if (ev.startHourNum >= last.endHourNum) {
+            // No overlap — reuse this column
+            columns[c].push(ev);
+            ev.colIndex = c;
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          ev.colIndex = columns.length;
+          columns.push([ev]);
+        }
+      }
+
+      // Assign total column count to each event in this cluster
+      // We need connected-component grouping so that non-overlapping sets
+      // don't inflate each other's column count.
+      // Use a sweep: for each event, find max colTotal among all events it overlaps with
+      const totalCols = columns.length;
+      for (const ev of dayEvents) {
+        ev.colTotal = totalCols;
+      }
+
+      // Refine: compute per-cluster column counts
+      // Group into clusters of mutually-overlapping events
+      if (dayEvents.length > 1) {
+        const clusters: typeof dayEvents[] = [];
+        let cluster: typeof dayEvents = [dayEvents[0]];
+        let clusterEnd = dayEvents[0].endHourNum;
+
+        for (let i = 1; i < dayEvents.length; i++) {
+          if (dayEvents[i].startHourNum < clusterEnd) {
+            cluster.push(dayEvents[i]);
+            clusterEnd = Math.max(clusterEnd, dayEvents[i].endHourNum);
+          } else {
+            clusters.push(cluster);
+            cluster = [dayEvents[i]];
+            clusterEnd = dayEvents[i].endHourNum;
+          }
+        }
+        clusters.push(cluster);
+
+        // Re-assign columns within each cluster independently
+        for (const cl of clusters) {
+          const clCols: typeof dayEvents[] = [];
+          for (const ev of cl) {
+            let placed = false;
+            for (let c = 0; c < clCols.length; c++) {
+              const last = clCols[c][clCols[c].length - 1];
+              if (ev.startHourNum >= last.endHourNum) {
+                clCols[c].push(ev);
+                ev.colIndex = c;
+                placed = true;
+                break;
+              }
+            }
+            if (!placed) {
+              ev.colIndex = clCols.length;
+              clCols.push([ev]);
+            }
+          }
+          for (const ev of cl) {
+            ev.colTotal = clCols.length;
+          }
+        }
+      }
+    }
+
+    return positioned;
   }, [events, startHour, endHour]);
 
   // Position ghost event for the calendar overlay
@@ -1330,12 +1423,16 @@ export default function CalendarPage() {
                           key={event._id}
                           data-event="true"
                           onMouseDown={(e) => handleEventMoveStart(e, event)}
-                          className={`group pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 shadow-sm transition ${
+                          className={`group pointer-events-auto absolute overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 shadow-sm transition ${
                             isBeingDragged ? 'opacity-50' : 'hover:bg-indigo-200'
                           } ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
                           style={{
                             top: `${event.top}%`,
-                            height: `${Math.max(event.height, 8)}%`
+                            height: `${Math.max(event.height, 2.5)}%`,
+                            left: `${(event.colIndex / event.colTotal) * 100}%`,
+                            width: `${(1 / event.colTotal) * 100 - 2}%`,
+                            marginLeft: '2px',
+                            marginRight: '2px'
                           }}
                         >
                           {/* Top resize handle */}
@@ -1365,16 +1462,16 @@ export default function CalendarPage() {
                           </button>
 
                           {/* Event content */}
-                          <div className="p-2 pt-2">
+                          <div className={event.height < 5 ? "px-1.5 py-0.5" : "p-2 pt-2"}>
                             <p className="truncate text-xs font-semibold text-indigo-900">
                               {event.title}
                             </p>
-                            {event.height > 12 && (
+                            {event.height > 5 && (
                               <p className="truncate text-xs text-indigo-700">
                                 {event.startTime}
                               </p>
                             )}
-                            {event.height > 20 && event.location && (
+                            {event.height > 12 && event.location && (
                               <p className="truncate text-xs text-indigo-600">
                                 {event.location}
                               </p>
