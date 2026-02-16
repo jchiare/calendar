@@ -83,6 +83,93 @@ type HouseholdMember = {
   role: string;
 };
 
+type HouseholdData = {
+  _id: Id<"workspaces">;
+  name: string;
+  members: HouseholdMember[];
+};
+
+const MEMBER_DOT: Record<string, string> = {
+  indigo: "bg-indigo-500",
+  rose: "bg-rose-500",
+  amber: "bg-amber-500",
+  emerald: "bg-emerald-500",
+  cyan: "bg-cyan-500",
+  purple: "bg-purple-500",
+  orange: "bg-orange-500",
+  teal: "bg-teal-500",
+};
+
+function HouseholdPopover({
+  household,
+  onClose,
+}: {
+  household: HouseholdData;
+  onClose: () => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={popoverRef}
+      className="absolute left-0 top-full z-50 mt-2 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+    >
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        Household
+      </p>
+      <p className="mt-1 text-sm font-semibold text-slate-900">
+        {household.name}
+      </p>
+
+      <div className="mt-3 border-t border-slate-100 pt-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          Members ({household.members.length})
+        </p>
+        <ul className="mt-2 space-y-1.5">
+          {household.members.map((member) => (
+            <li
+              key={member._id}
+              className="flex items-center gap-2.5 rounded-lg px-2 py-1.5"
+            >
+              <span
+                className={`inline-block h-3 w-3 rounded-full ${
+                  MEMBER_DOT[member.color] ?? "bg-slate-400"
+                }`}
+              />
+              <span className="flex-1 text-sm text-slate-800">
+                {member.avatarEmoji && (
+                  <span className="mr-1">{member.avatarEmoji}</span>
+                )}
+                {member.name}
+              </span>
+              <span className="text-[10px] text-slate-400">
+                {member.role}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function MemberBar({
   members,
   activeMemberId,
@@ -93,17 +180,6 @@ function MemberBar({
   onSelectMember: (id: Id<"users"> | null) => void;
 }) {
   if (members.length === 0) return null;
-
-  const dotColor: Record<string, string> = {
-    indigo: "bg-indigo-500",
-    rose: "bg-rose-500",
-    amber: "bg-amber-500",
-    emerald: "bg-emerald-500",
-    cyan: "bg-cyan-500",
-    purple: "bg-purple-500",
-    orange: "bg-orange-500",
-    teal: "bg-teal-500",
-  };
 
   return (
     <div className="flex items-center gap-1">
@@ -133,7 +209,7 @@ function MemberBar({
         >
           <span
             className={`inline-block h-2.5 w-2.5 rounded-full ${
-              dotColor[member.color] ?? "bg-slate-400"
+              MEMBER_DOT[member.color] ?? "bg-slate-400"
             } ${activeMemberId === member._id ? "ring-1 ring-white" : ""}`}
           />
           <span className="max-w-[80px] truncate">{member.name}</span>
@@ -555,6 +631,7 @@ export default function CalendarPage() {
   // Household / multi-user state
   const household = useQuery(api.household.getHousehold);
   const [activeMemberId, setActiveMemberId] = useState<Id<"users"> | null>(null);
+  const [householdPopoverOpen, setHouseholdPopoverOpen] = useState(false);
 
   // Ghost event from AI chat (pending confirmation)
   const [ghostEvent, setGhostEvent] = useState<{
@@ -1397,9 +1474,20 @@ export default function CalendarPage() {
     <main className="mx-auto max-w-[1700px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-slate-900">
-            {household?.name ?? "Calendar"}
-          </h1>
+          <div className="relative">
+            <button
+              onClick={() => setHouseholdPopoverOpen((prev) => !prev)}
+              className="cursor-pointer text-xl font-semibold text-slate-900 hover:text-indigo-600 transition-colors"
+            >
+              {household?.name ?? "Calendar"}
+            </button>
+            {householdPopoverOpen && household && (
+              <HouseholdPopover
+                household={household as HouseholdData}
+                onClose={() => setHouseholdPopoverOpen(false)}
+              />
+            )}
+          </div>
           {household && household.members.length > 1 && (
             <MemberBar
               members={household.members as HouseholdMember[]}
