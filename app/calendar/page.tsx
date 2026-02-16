@@ -511,26 +511,31 @@ export default function CalendarPage() {
   const mouseStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const hasDragStartedRef = useRef(false);
 
-  const events = useQuery(api.events.getWeekEvents, {
-    weekStart: currentWeekStart.getTime()
-  });
-  const seedDemo = useMutation(api.events.seedDemo);
+  const householdContext = useQuery(api.events.getHouseholdContext);
+  const ensureOnboardingSeed = useMutation(api.events.ensureOnboardingSeed);
+  const activeWorkspaceId = householdContext?.workspaceId;
+  const activeUserId = householdContext?.activeUserId;
+
+  const events = useQuery(
+    api.events.getWeekEvents,
+    householdContext
+      ? {
+          workspaceId: householdContext.workspaceId,
+          weekStart: currentWeekStart.getTime()
+        }
+      : "skip"
+  );
   const createEvent = useMutation(api.events.createEvent);
   const updateEvent = useMutation(api.events.updateEvent);
   const deleteEvent = useMutation(api.events.deleteEvent);
   const deleteRecurringEvents = useMutation(api.events.deleteRecurringEvents);
-  const enableAutoDemoSeed =
-    process.env.NODE_ENV === "development" &&
-    process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true";
 
   useEffect(() => {
-    if (!enableAutoDemoSeed) return;
-
-    if (events && events.length === 0 && !seededRef.current) {
+    if (householdContext === null && !seededRef.current) {
       seededRef.current = true;
-      void seedDemo();
+      void ensureOnboardingSeed();
     }
-  }, [enableAutoDemoSeed, events, seedDemo]);
+  }, [householdContext, ensureOnboardingSeed]);
 
   const days = useMemo(() => {
     const formatter = new Intl.DateTimeFormat("en-US", {
@@ -794,6 +799,11 @@ export default function CalendarPage() {
 
   const handleSaveEvent = useCallback(
     async (formData: EventFormData) => {
+      if (!activeWorkspaceId || !activeUserId) {
+        alert("Household setup is still loading. Please try again.");
+        return;
+      }
+
       const [year, month, day] = formData.date.split("-").map(Number);
       const [startHours, startMinutes] = formData.startTime
         .split(":")
@@ -810,6 +820,8 @@ export default function CalendarPage() {
 
       if (editingEvent) {
         await updateEvent({
+          workspaceId: activeWorkspaceId,
+          actorUserId: activeUserId,
           id: editingEvent._id,
           title: formData.title,
           description: formData.description || undefined,
@@ -819,6 +831,8 @@ export default function CalendarPage() {
         });
       } else {
         await createEvent({
+          workspaceId: activeWorkspaceId,
+          actorUserId: activeUserId,
           title: formData.title,
           description: formData.description || undefined,
           start: startDate.getTime(),
@@ -831,47 +845,59 @@ export default function CalendarPage() {
       setEditingEvent(null);
       setSelectedDate(undefined);
     },
-    [editingEvent, createEvent, updateEvent]
+    [editingEvent, createEvent, updateEvent, activeWorkspaceId, activeUserId]
   );
 
   const handleDeleteEvent = useCallback(async () => {
-    if (editingEvent) {
-      await deleteEvent({ id: editingEvent._id });
+    if (editingEvent && activeWorkspaceId && activeUserId) {
+      await deleteEvent({
+        workspaceId: activeWorkspaceId,
+        actorUserId: activeUserId,
+        id: editingEvent._id
+      });
       setModalOpen(false);
       setEditingEvent(null);
     }
-  }, [editingEvent, deleteEvent]);
+  }, [editingEvent, deleteEvent, activeWorkspaceId, activeUserId]);
 
   const handleDeleteFutureRecurring = useCallback(async () => {
-    if (editingEvent?.recurrence) {
+    if (editingEvent?.recurrence && activeWorkspaceId && activeUserId) {
       await deleteRecurringEvents({
+        workspaceId: activeWorkspaceId,
+        actorUserId: activeUserId,
         recurrenceId: editingEvent.recurrence,
         fromStart: editingEvent.start,
       });
       setModalOpen(false);
       setEditingEvent(null);
     }
-  }, [editingEvent, deleteRecurringEvents]);
+  }, [editingEvent, deleteRecurringEvents, activeWorkspaceId, activeUserId]);
 
   // Delete via the hover × popover (not through the edit modal)
   const handlePopoverDeleteSingle = useCallback(async () => {
-    if (deletePopoverEvent) {
-      await deleteEvent({ id: deletePopoverEvent._id });
+    if (deletePopoverEvent && activeWorkspaceId && activeUserId) {
+      await deleteEvent({
+        workspaceId: activeWorkspaceId,
+        actorUserId: activeUserId,
+        id: deletePopoverEvent._id
+      });
       setDeletePopoverEvent(null);
       setDeletePopoverPos(null);
     }
-  }, [deletePopoverEvent, deleteEvent]);
+  }, [deletePopoverEvent, deleteEvent, activeWorkspaceId, activeUserId]);
 
   const handlePopoverDeleteFuture = useCallback(async () => {
-    if (deletePopoverEvent?.recurrence) {
+    if (deletePopoverEvent?.recurrence && activeWorkspaceId && activeUserId) {
       await deleteRecurringEvents({
+        workspaceId: activeWorkspaceId,
+        actorUserId: activeUserId,
         recurrenceId: deletePopoverEvent.recurrence,
         fromStart: deletePopoverEvent.start,
       });
       setDeletePopoverEvent(null);
       setDeletePopoverPos(null);
     }
-  }, [deletePopoverEvent, deleteRecurringEvents]);
+  }, [deletePopoverEvent, deleteRecurringEvents, activeWorkspaceId, activeUserId]);
 
   const openNewEventModal = useCallback((date?: Date, startTime?: string, endTime?: string) => {
     setEditingEvent(null);
@@ -1110,6 +1136,10 @@ export default function CalendarPage() {
 
       openNewEventModal(date, hoursToTimeString(eventStartTime), hoursToTimeString(eventEndTime));
     } else if (mode === 'move' && eventDragInfoRef.current) {
+      if (!activeWorkspaceId || !activeUserId) {
+        resetDragState();
+        return;
+      }
       // Move existing event
       const eventInfo = eventDragInfoRef.current;
       const timeDiff = dragCurrentInfo.time - dragStartInfo.time;
@@ -1128,6 +1158,8 @@ export default function CalendarPage() {
       newEnd.setHours(Math.floor(newEndTime), Math.round((newEndTime % 1) * 60), 0, 0);
 
       await updateEvent({
+        workspaceId: activeWorkspaceId,
+        actorUserId: activeUserId,
         id: eventInfo.event._id,
         title: eventInfo.event.title,
         description: eventInfo.event.description,
@@ -1136,6 +1168,10 @@ export default function CalendarPage() {
         location: eventInfo.event.location
       });
     } else if ((mode === 'resize-top' || mode === 'resize-bottom') && eventDragInfoRef.current) {
+      if (!activeWorkspaceId || !activeUserId) {
+        resetDragState();
+        return;
+      }
       // Resize existing event
       const eventInfo = eventDragInfoRef.current;
       let newStartTime = eventInfo.originalStart;
@@ -1155,6 +1191,8 @@ export default function CalendarPage() {
       newEnd.setHours(Math.floor(newEndTime), Math.round((newEndTime % 1) * 60), 0, 0);
 
       await updateEvent({
+        workspaceId: activeWorkspaceId,
+        actorUserId: activeUserId,
         id: eventInfo.event._id,
         title: eventInfo.event.title,
         description: eventInfo.event.description,
@@ -1165,7 +1203,7 @@ export default function CalendarPage() {
     }
 
     resetDragState();
-  }, [dragCurrent, currentWeekStart, openNewEventModal, openEditEventModal, resetDragState, updateEvent]);
+  }, [dragCurrent, currentWeekStart, openNewEventModal, openEditEventModal, resetDragState, updateEvent, activeWorkspaceId, activeUserId]);
 
   // Handle escape key to cancel drag
   useEffect(() => {
@@ -1291,7 +1329,14 @@ export default function CalendarPage() {
   return (
     <main className="mx-auto max-w-[1700px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
+          <p className="text-xs text-slate-500">
+            {householdContext?.workspaceName
+              ? `${householdContext.workspaceName} · AI-first household planner`
+              : "Preparing household workspace..."}
+          </p>
+        </div>
         <div
           className="flex w-full items-center gap-1.5 sm:w-auto sm:gap-2"
           onTouchStart={handleWeekSwipeStart}
@@ -1546,7 +1591,11 @@ export default function CalendarPage() {
         </section>
 
         <aside className="h-[420px] min-h-[340px] min-w-0 sm:h-[500px] lg:h-[calc(100vh-96px)]">
-          <ChatPanel onGhostEventChange={setGhostEvent} />
+          <ChatPanel
+            onGhostEventChange={setGhostEvent}
+            workspaceId={activeWorkspaceId}
+            actorUserId={activeUserId}
+          />
         </aside>
       </div>
 

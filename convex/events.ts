@@ -1,13 +1,80 @@
-import { query, mutation } from "./_generated/server";
-import type { QueryCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { MAX_EVENT_DURATION_MS, validateEvent } from "./eventValidation";
 
+const READ_ONLY_ROLES = new Set(["child-view", "guest"]);
+const ONBOARDING_SEED_VERSION = "household-onboarding-v1";
+const ONBOARDING_WORKSPACE_NAME = "Rivera Household";
+const ONBOARDING_SHARED_CALENDAR_EXTERNAL_ID =
+  "onboarding-rivera-family-shared-v1";
+const ONBOARDING_ALEX_CALENDAR_EXTERNAL_ID = "onboarding-rivera-alex-work-v1";
+const ONBOARDING_MIA_CALENDAR_EXTERNAL_ID = "onboarding-rivera-mia-school-v1";
+
+type DbCtx = Pick<QueryCtx, "db"> | Pick<MutationCtx, "db">;
+
+type SeedOutcome = {
+  workspaceId: Id<"workspaces">;
+  activeUserId: Id<"users">;
+  createdWorkspace: boolean;
+  seededEvents: boolean;
+};
+
+function getWeekStart(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
+function rolePriority(role: string): number {
+  if (role === "owner") return 0;
+  if (role === "adult") return 1;
+  if (role === "caregiver") return 2;
+  if (role === "child-view") return 3;
+  return 4;
+}
+
+async function getWorkspaceCalendars(
+  ctx: DbCtx,
+  workspaceId: Id<"workspaces">
+): Promise<Doc<"calendars">[]> {
+  return ctx.db
+    .query("calendars")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+}
+
+async function getWorkspaceMemberships(
+  ctx: DbCtx,
+  workspaceId: Id<"workspaces">
+): Promise<Doc<"memberships">[]> {
+  return ctx.db
+    .query("memberships")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+}
+
+async function getWorkspaceEvents(ctx: DbCtx, workspaceId: Id<"workspaces">) {
+  const calendars = await getWorkspaceCalendars(ctx, workspaceId);
+  if (calendars.length === 0) return [];
+
+  const calendarIds = new Set(calendars.map((calendar) => calendar._id));
+  const allEvents = await ctx.db.query("events").collect();
+  return allEvents.filter((event) => calendarIds.has(event.calendarId));
+}
+
 async function getEventsOverlappingRange(
   ctx: QueryCtx,
+  workspaceId: Id<"workspaces">,
   rangeStart: number,
   rangeEnd: number
 ) {
+  const calendars = await getWorkspaceCalendars(ctx, workspaceId);
+  if (calendars.length === 0) return [];
+
+  const calendarIds = new Set(calendars.map((calendar) => calendar._id));
   const earliestRelevantStart = rangeStart - MAX_EVENT_DURATION_MS;
   const candidates = await ctx.db
     .query("events")
@@ -17,47 +84,583 @@ async function getEventsOverlappingRange(
     .collect();
 
   return candidates
-    .filter((event) => event.end > rangeStart)
+    .filter(
+      (event) => event.end > rangeStart && calendarIds.has(event.calendarId)
+    )
     .sort((a, b) => a.start - b.start);
 }
 
+async function getMembershipForUser(
+  ctx: DbCtx,
+  workspaceId: Id<"workspaces">,
+  userId: Id<"users">
+) {
+  const memberships = await getWorkspaceMemberships(ctx, workspaceId);
+  return memberships.find((membership) => membership.userId === userId) ?? null;
+}
+
+async function assertWorkspaceWriteAccess(
+  ctx: MutationCtx,
+  workspaceId: Id<"workspaces">,
+  actorUserId: Id<"users">
+) {
+  const membership = await getMembershipForUser(ctx, workspaceId, actorUserId);
+  if (!membership) {
+    throw new Error("You are not a member of this household workspace.");
+  }
+  if (READ_ONLY_ROLES.has(membership.role)) {
+    throw new Error("Your role is read-only for calendar edits.");
+  }
+}
+
+async function assertEventInWorkspace(
+  ctx: MutationCtx,
+  eventId: Id<"events">,
+  workspaceId: Id<"workspaces">
+) {
+  const event = await ctx.db.get(eventId);
+  if (!event) {
+    throw new Error("Event not found.");
+  }
+
+  const calendar = await ctx.db.get(event.calendarId);
+  if (!calendar || calendar.workspaceId !== workspaceId) {
+    throw new Error("Event does not belong to this household workspace.");
+  }
+
+  return event;
+}
+
+async function getOrCreatePrimaryCalendar(
+  ctx: MutationCtx,
+  workspaceId: Id<"workspaces">
+) {
+  const onboardingSharedCalendar = await ctx.db
+    .query("calendars")
+    .withIndex("by_provider_external", (q) =>
+      q
+        .eq("provider", "convex")
+        .eq("externalId", ONBOARDING_SHARED_CALENDAR_EXTERNAL_ID)
+    )
+    .first();
+
+  if (
+    onboardingSharedCalendar &&
+    onboardingSharedCalendar.workspaceId === workspaceId
+  ) {
+    return onboardingSharedCalendar;
+  }
+
+  const calendars = await getWorkspaceCalendars(ctx, workspaceId);
+  if (calendars.length > 0) {
+    return calendars[0];
+  }
+
+  const calendarId = await ctx.db.insert("calendars", {
+    workspaceId,
+    provider: "convex",
+    externalId: `workspace-${workspaceId}-shared`,
+    syncStatus: "ready",
+    name: "Family Shared",
+    timezone: "America/Los_Angeles",
+  });
+
+  const createdCalendar = await ctx.db.get(calendarId);
+  if (!createdCalendar) {
+    throw new Error("Failed to create workspace calendar.");
+  }
+  return createdCalendar;
+}
+
+async function ensureUserByEmail(
+  ctx: MutationCtx,
+  {
+    name,
+    email,
+    timezone,
+  }: { name: string; email: string; timezone: string }
+): Promise<Doc<"users">> {
+  const existing = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .first();
+
+  if (existing) {
+    if (existing.name !== name || existing.timezone !== timezone) {
+      await ctx.db.patch(existing._id, { name, timezone });
+    }
+    const updated = await ctx.db.get(existing._id);
+    if (!updated) throw new Error("Failed to load existing user.");
+    return updated;
+  }
+
+  const userId = await ctx.db.insert("users", {
+    name,
+    email,
+    timezone,
+    createdAt: Date.now(),
+  });
+  const user = await ctx.db.get(userId);
+  if (!user) throw new Error("Failed to create user.");
+  return user;
+}
+
+async function ensureWorkspaceForOwner(
+  ctx: MutationCtx,
+  ownerId: Id<"users">
+): Promise<{ workspace: Doc<"workspaces">; createdWorkspace: boolean }> {
+  const ownedWorkspaces = await ctx.db
+    .query("workspaces")
+    .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+    .collect();
+
+  const existing =
+    ownedWorkspaces.find(
+      (workspace) => workspace.name === ONBOARDING_WORKSPACE_NAME
+    ) ?? null;
+
+  if (existing) {
+    return { workspace: existing, createdWorkspace: false };
+  }
+
+  const workspaceId = await ctx.db.insert("workspaces", {
+    name: ONBOARDING_WORKSPACE_NAME,
+    ownerId,
+    plan: "starter",
+    createdAt: Date.now(),
+  });
+
+  const workspace = await ctx.db.get(workspaceId);
+  if (!workspace) throw new Error("Failed to create workspace.");
+  return { workspace, createdWorkspace: true };
+}
+
+async function ensureMembershipRole(
+  ctx: MutationCtx,
+  existingMemberships: Doc<"memberships">[],
+  {
+    workspaceId,
+    userId,
+    role,
+    createdAt,
+  }: {
+    workspaceId: Id<"workspaces">;
+    userId: Id<"users">;
+    role: string;
+    createdAt: number;
+  }
+) {
+  const existingMembership =
+    existingMemberships.find((membership) => membership.userId === userId) ??
+    null;
+
+  if (existingMembership) {
+    if (existingMembership.role !== role) {
+      await ctx.db.patch(existingMembership._id, { role });
+    }
+    return;
+  }
+
+  await ctx.db.insert("memberships", {
+    userId,
+    workspaceId,
+    role,
+    createdAt,
+  });
+}
+
+async function ensureCalendar(
+  ctx: MutationCtx,
+  {
+    workspaceId,
+    externalId,
+    name,
+    timezone,
+  }: {
+    workspaceId: Id<"workspaces">;
+    externalId: string;
+    name: string;
+    timezone: string;
+  }
+) {
+  const existing = await ctx.db
+    .query("calendars")
+    .withIndex("by_provider_external", (q) =>
+      q.eq("provider", "convex").eq("externalId", externalId)
+    )
+    .first();
+
+  if (existing) {
+    if (
+      existing.workspaceId !== workspaceId ||
+      existing.name !== name ||
+      existing.timezone !== timezone ||
+      existing.syncStatus !== "ready"
+    ) {
+      await ctx.db.patch(existing._id, {
+        workspaceId,
+        name,
+        timezone,
+        syncStatus: "ready",
+      });
+    }
+    const updated = await ctx.db.get(existing._id);
+    if (!updated) throw new Error("Failed to load existing calendar.");
+    return updated;
+  }
+
+  const calendarId = await ctx.db.insert("calendars", {
+    workspaceId,
+    provider: "convex",
+    externalId,
+    syncStatus: "ready",
+    name,
+    timezone,
+  });
+  const calendar = await ctx.db.get(calendarId);
+  if (!calendar) throw new Error("Failed to create calendar.");
+  return calendar;
+}
+
+async function ensureOnboardingSeedData(ctx: MutationCtx): Promise<SeedOutcome> {
+  const now = Date.now();
+
+  const alex = await ensureUserByEmail(ctx, {
+    name: "Alex Rivera",
+    email: "alex@rivera.family",
+    timezone: "America/Los_Angeles",
+  });
+  const jordan = await ensureUserByEmail(ctx, {
+    name: "Jordan Rivera",
+    email: "jordan@rivera.family",
+    timezone: "America/Los_Angeles",
+  });
+  const mia = await ensureUserByEmail(ctx, {
+    name: "Mia Rivera",
+    email: "mia@rivera.family",
+    timezone: "America/Los_Angeles",
+  });
+  const nana = await ensureUserByEmail(ctx, {
+    name: "Nana Rivera",
+    email: "nana@rivera.family",
+    timezone: "America/Los_Angeles",
+  });
+
+  const { workspace, createdWorkspace } = await ensureWorkspaceForOwner(
+    ctx,
+    alex._id
+  );
+
+  const existingMemberships = await getWorkspaceMemberships(ctx, workspace._id);
+  await ensureMembershipRole(ctx, existingMemberships, {
+    workspaceId: workspace._id,
+    userId: alex._id,
+    role: "owner",
+    createdAt: now,
+  });
+  await ensureMembershipRole(ctx, existingMemberships, {
+    workspaceId: workspace._id,
+    userId: jordan._id,
+    role: "adult",
+    createdAt: now,
+  });
+  await ensureMembershipRole(ctx, existingMemberships, {
+    workspaceId: workspace._id,
+    userId: mia._id,
+    role: "child-view",
+    createdAt: now,
+  });
+  await ensureMembershipRole(ctx, existingMemberships, {
+    workspaceId: workspace._id,
+    userId: nana._id,
+    role: "caregiver",
+    createdAt: now,
+  });
+
+  const sharedCalendar = await ensureCalendar(ctx, {
+    workspaceId: workspace._id,
+    externalId: ONBOARDING_SHARED_CALENDAR_EXTERNAL_ID,
+    name: "Family Shared",
+    timezone: "America/Los_Angeles",
+  });
+  const alexCalendar = await ensureCalendar(ctx, {
+    workspaceId: workspace._id,
+    externalId: ONBOARDING_ALEX_CALENDAR_EXTERNAL_ID,
+    name: "Alex - Work",
+    timezone: "America/Los_Angeles",
+  });
+  const miaCalendar = await ensureCalendar(ctx, {
+    workspaceId: workspace._id,
+    externalId: ONBOARDING_MIA_CALENDAR_EXTERNAL_ID,
+    name: "Mia - School",
+    timezone: "America/Los_Angeles",
+  });
+
+  const existingEvents = await getWorkspaceEvents(ctx, workspace._id);
+  let seededEvents = false;
+
+  if (existingEvents.length === 0) {
+    seededEvents = true;
+    const weekStart = getWeekStart(new Date());
+    const slot = (
+      dayOffset: number,
+      hour: number,
+      minute: number,
+      durationMinutes: number
+    ) => {
+      const start = new Date(weekStart);
+      start.setDate(weekStart.getDate() + dayOffset);
+      start.setHours(hour, minute, 0, 0);
+      return {
+        start: start.getTime(),
+        end: start.getTime() + durationMinutes * 60 * 1000,
+      };
+    };
+
+    const events = [
+      {
+        calendarId: sharedCalendar._id,
+        ownerUserId: jordan._id,
+        participantUserIds: [mia._id],
+        title: "School drop-off",
+        description: "Backpack + lunch check",
+        location: "Oakridge Elementary",
+        ...slot(1, 7, 20, 35),
+      },
+      {
+        calendarId: alexCalendar._id,
+        ownerUserId: alex._id,
+        participantUserIds: [],
+        title: "Product roadmap sync",
+        description: "Q2 priorities and launch sequencing",
+        location: "HQ Room 2B",
+        ...slot(1, 9, 30, 60),
+      },
+      {
+        calendarId: sharedCalendar._id,
+        ownerUserId: jordan._id,
+        participantUserIds: [mia._id, nana._id],
+        title: "Soccer practice pickup",
+        description: "Traffic-sensitive route",
+        location: "North Field",
+        ...slot(1, 17, 15, 75),
+      },
+      {
+        calendarId: miaCalendar._id,
+        ownerUserId: mia._id,
+        participantUserIds: [nana._id],
+        title: "Piano lesson",
+        description: "Book 3, pages 14-16",
+        location: "Bright Keys Studio",
+        ...slot(2, 16, 0, 60),
+      },
+      {
+        calendarId: sharedCalendar._id,
+        ownerUserId: alex._id,
+        participantUserIds: [jordan._id],
+        title: "Fridge inventory check",
+        description: "Plan grocery reorder before Thursday",
+        location: "Home",
+        ...slot(3, 19, 30, 30),
+      },
+      {
+        calendarId: sharedCalendar._id,
+        ownerUserId: nana._id,
+        participantUserIds: [mia._id],
+        title: "Dentist appointment",
+        description: "Bring insurance card",
+        location: "Smile Dental Group",
+        ...slot(4, 14, 30, 60),
+      },
+      {
+        calendarId: sharedCalendar._id,
+        ownerUserId: jordan._id,
+        participantUserIds: [alex._id, mia._id, nana._id],
+        title: "Family week planning",
+        description: "Review school events + travel window",
+        location: "Kitchen table",
+        ...slot(5, 18, 0, 45),
+      },
+      {
+        calendarId: sharedCalendar._id,
+        ownerUserId: alex._id,
+        participantUserIds: [jordan._id],
+        title: "Grocery restock run",
+        description: "Use inventory list before leaving",
+        location: "Green Market",
+        ...slot(6, 10, 0, 90),
+      },
+    ];
+
+    await Promise.all(
+      events.map((event) =>
+        ctx.db.insert("events", {
+          calendarId: event.calendarId,
+          title: event.title,
+          description: event.description,
+          start: event.start,
+          end: event.end,
+          location: event.location,
+          metadata: {
+            seedVersion: ONBOARDING_SEED_VERSION,
+            ownerUserId: event.ownerUserId,
+            participantUserIds: event.participantUserIds,
+            createdByUserId: alex._id,
+          },
+          updatedAt: now,
+          createdAt: now,
+        })
+      )
+    );
+  }
+
+  return {
+    workspaceId: workspace._id,
+    activeUserId: alex._id,
+    createdWorkspace,
+    seededEvents,
+  };
+}
+
+async function getActiveWorkspace(ctx: DbCtx): Promise<Doc<"workspaces"> | null> {
+  const onboardingCalendar = await ctx.db
+    .query("calendars")
+    .withIndex("by_provider_external", (q) =>
+      q
+        .eq("provider", "convex")
+        .eq("externalId", ONBOARDING_SHARED_CALENDAR_EXTERNAL_ID)
+    )
+    .first();
+
+  if (onboardingCalendar) {
+    const workspace = await ctx.db.get(onboardingCalendar.workspaceId);
+    if (workspace) {
+      return workspace;
+    }
+  }
+
+  const workspaces = await ctx.db.query("workspaces").collect();
+  if (workspaces.length === 0) return null;
+  workspaces.sort((a, b) => a.createdAt - b.createdAt);
+  return workspaces[0];
+}
+
+async function buildHouseholdContext(
+  ctx: DbCtx,
+  workspace: Doc<"workspaces">
+) {
+  const [memberships, calendars, events, owner] = await Promise.all([
+    getWorkspaceMemberships(ctx, workspace._id),
+    getWorkspaceCalendars(ctx, workspace._id),
+    getWorkspaceEvents(ctx, workspace._id),
+    ctx.db.get(workspace.ownerId),
+  ]);
+
+  const members = (
+    await Promise.all(
+      memberships.map(async (membership) => {
+        const user = await ctx.db.get(membership.userId);
+        if (!user) return null;
+        return {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: membership.role,
+        };
+      })
+    )
+  )
+    .filter((member): member is NonNullable<typeof member> => member !== null)
+    .sort(
+      (a, b) =>
+        rolePriority(a.role) - rolePriority(b.role) || a.name.localeCompare(b.name)
+    );
+
+  const activeUserId = owner?._id ?? members[0]?.id ?? workspace.ownerId;
+  const activeUserName =
+    members.find((member) => member.id === activeUserId)?.name ??
+    owner?.name ??
+    "Household Admin";
+
+  return {
+    workspaceId: workspace._id,
+    workspaceName: workspace.name,
+    activeUserId,
+    activeUserName,
+    members,
+    calendarCount: calendars.length,
+    eventCount: events.length,
+    onboardingSeedVersion: ONBOARDING_SEED_VERSION,
+  };
+}
+
+export const getHouseholdContext = query({
+  args: {},
+  handler: async (ctx) => {
+    const workspace = await getActiveWorkspace(ctx);
+    if (!workspace) return null;
+    return buildHouseholdContext(ctx, workspace);
+  },
+});
+
+export const ensureOnboardingSeed = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const result = await ensureOnboardingSeedData(ctx);
+    const workspace = await ctx.db.get(result.workspaceId);
+    if (!workspace) {
+      throw new Error("Failed to load seeded workspace.");
+    }
+
+    const context = await buildHouseholdContext(ctx, workspace);
+    return {
+      ...context,
+      seededEvents: result.seededEvents,
+      createdWorkspace: result.createdWorkspace,
+    };
+  },
+});
+
 export const getWeekEvents = query({
   args: {
-    weekStart: v.number()
+    workspaceId: v.id("workspaces"),
+    weekStart: v.number(),
   },
   handler: async (ctx, args) => {
     const start = args.weekStart;
     const end = start + 7 * 24 * 60 * 60 * 1000;
-    return getEventsOverlappingRange(ctx, start, end);
-  }
+    return getEventsOverlappingRange(ctx, args.workspaceId, start, end);
+  },
 });
 
 export const getTodayEvents = query({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    workspaceId: v.id("workspaces"),
+  },
+  handler: async (ctx, args) => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     const start = now.getTime();
     const end = start + 24 * 60 * 60 * 1000;
-    return getEventsOverlappingRange(ctx, start, end);
-  }
+    return getEventsOverlappingRange(ctx, args.workspaceId, start, end);
+  },
 });
 
 export const getStats = query({
-  args: {},
-  handler: async (ctx) => {
-    const memberships = await ctx.db.query("memberships").collect();
-    const uniqueUserIds = new Set(memberships.map((m) => m.userId));
+  args: {
+    workspaceId: v.id("workspaces"),
+  },
+  handler: async (ctx, args) => {
+    const memberships = await getWorkspaceMemberships(ctx, args.workspaceId);
+    const calendars = await getWorkspaceCalendars(ctx, args.workspaceId);
 
-    const calendars = await ctx.db.query("calendars").collect();
-
-    // Count overlapping events for today
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     const todayStart = now.getTime();
     const todayEnd = todayStart + 24 * 60 * 60 * 1000;
     const todayEvents = await getEventsOverlappingRange(
       ctx,
+      args.workspaceId,
       todayStart,
       todayEnd
     );
@@ -72,88 +675,79 @@ export const getStats = query({
     }
 
     return [
-      { label: "Active family members", value: String(uniqueUserIds.size) },
+      { label: "Active family members", value: String(memberships.length) },
       { label: "Connected calendars", value: String(calendars.length) },
-      { label: "Pending conflicts", value: String(conflicts) }
+      { label: "Pending conflicts", value: String(conflicts) },
     ];
-  }
+  },
 });
 
 export const createEvent = mutation({
   args: {
+    workspaceId: v.id("workspaces"),
+    actorUserId: v.id("users"),
     title: v.string(),
     description: v.optional(v.string()),
     start: v.number(),
     end: v.number(),
-    location: v.optional(v.string())
+    location: v.optional(v.string()),
+    ownerUserId: v.optional(v.id("users")),
+    participantUserIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     validateEvent(args);
+    await assertWorkspaceWriteAccess(ctx, args.workspaceId, args.actorUserId);
 
-    // Get or create a default calendar
-    let calendar = await ctx.db.query("calendars").first();
-
-    if (!calendar) {
-      // Create default workspace and calendar
-      const now = Date.now();
-      const userId = await ctx.db.insert("users", {
-        name: "Default User",
-        email: "user@example.com",
-        timezone: "America/Los_Angeles",
-        createdAt: now
-      });
-      const workspaceId = await ctx.db.insert("workspaces", {
-        name: "Family HQ",
-        ownerId: userId,
-        plan: "starter",
-        createdAt: now
-      });
-      const calendarId = await ctx.db.insert("calendars", {
-        workspaceId,
-        provider: "convex",
-        externalId: `family-${workspaceId}`,
-        syncStatus: "ready",
-        name: "Family Calendar",
-        timezone: "America/Los_Angeles"
-      });
-      calendar = await ctx.db.get(calendarId);
-    }
-
+    const calendar = await getOrCreatePrimaryCalendar(ctx, args.workspaceId);
     const now = Date.now();
+
     return ctx.db.insert("events", {
-      calendarId: calendar!._id,
+      calendarId: calendar._id,
       title: args.title,
       description: args.description,
       start: args.start,
       end: args.end,
       location: args.location,
+      metadata: {
+        ownerUserId: args.ownerUserId ?? args.actorUserId,
+        participantUserIds: args.participantUserIds ?? [],
+        createdByUserId: args.actorUserId,
+      },
       updatedAt: now,
-      createdAt: now
+      createdAt: now,
     });
-  }
+  },
 });
 
 export const updateEvent = mutation({
   args: {
+    workspaceId: v.id("workspaces"),
+    actorUserId: v.id("users"),
     id: v.id("events"),
     title: v.string(),
     description: v.optional(v.string()),
     start: v.number(),
     end: v.number(),
-    location: v.optional(v.string())
+    location: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     validateEvent(args);
-    const { id, ...updates } = args;
+    await assertWorkspaceWriteAccess(ctx, args.workspaceId, args.actorUserId);
+    await assertEventInWorkspace(ctx, args.id, args.workspaceId);
+
+    const { id, workspaceId: _workspaceId, actorUserId: _actorUserId, ...updates } =
+      args;
     await ctx.db.patch(id, {
       ...updates,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     });
-  }
+  },
 });
 
 export const batchCreateEvents = mutation({
   args: {
+    workspaceId: v.id("workspaces"),
+    actorUserId: v.id("users"),
     events: v.array(
       v.object({
         title: v.string(),
@@ -161,54 +755,36 @@ export const batchCreateEvents = mutation({
         start: v.number(),
         end: v.number(),
         location: v.optional(v.string()),
+        ownerUserId: v.optional(v.id("users")),
+        participantUserIds: v.optional(v.array(v.id("users"))),
       })
     ),
     recurrenceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Validate all events
+    await assertWorkspaceWriteAccess(ctx, args.workspaceId, args.actorUserId);
     for (const event of args.events) {
       validateEvent(event);
     }
 
-    // Get or create a default calendar (same logic as createEvent)
-    let calendar = await ctx.db.query("calendars").first();
-    if (!calendar) {
-      const now = Date.now();
-      const userId = await ctx.db.insert("users", {
-        name: "Default User",
-        email: "user@example.com",
-        timezone: "America/Los_Angeles",
-        createdAt: now,
-      });
-      const workspaceId = await ctx.db.insert("workspaces", {
-        name: "Family HQ",
-        ownerId: userId,
-        plan: "starter",
-        createdAt: now,
-      });
-      const calendarId = await ctx.db.insert("calendars", {
-        workspaceId,
-        provider: "convex",
-        externalId: `family-${workspaceId}`,
-        syncStatus: "ready",
-        name: "Family Calendar",
-        timezone: "America/Los_Angeles",
-      });
-      calendar = await ctx.db.get(calendarId);
-    }
-
+    const calendar = await getOrCreatePrimaryCalendar(ctx, args.workspaceId);
     const now = Date.now();
+
     await Promise.all(
       args.events.map((event) =>
         ctx.db.insert("events", {
-          calendarId: calendar!._id,
+          calendarId: calendar._id,
           title: event.title,
           description: event.description,
           start: event.start,
           end: event.end,
           location: event.location,
           recurrence: args.recurrenceId,
+          metadata: {
+            ownerUserId: event.ownerUserId ?? args.actorUserId,
+            participantUserIds: event.participantUserIds ?? [],
+            createdByUserId: args.actorUserId,
+          },
           updatedAt: now,
           createdAt: now,
         })
@@ -219,190 +795,50 @@ export const batchCreateEvents = mutation({
 
 export const deleteEvent = mutation({
   args: {
-    id: v.id("events")
+    workspaceId: v.id("workspaces"),
+    actorUserId: v.id("users"),
+    id: v.id("events"),
   },
   handler: async (ctx, args) => {
+    await assertWorkspaceWriteAccess(ctx, args.workspaceId, args.actorUserId);
+    await assertEventInWorkspace(ctx, args.id, args.workspaceId);
     await ctx.db.delete(args.id);
-  }
+  },
 });
 
 export const deleteRecurringEvents = mutation({
   args: {
+    workspaceId: v.id("workspaces"),
+    actorUserId: v.id("users"),
     recurrenceId: v.string(),
     fromStart: v.number(),
   },
   handler: async (ctx, args) => {
-    // Find all events with this recurrenceId that start at or after fromStart
+    await assertWorkspaceWriteAccess(ctx, args.workspaceId, args.actorUserId);
+
+    const calendars = await getWorkspaceCalendars(ctx, args.workspaceId);
+    const calendarIds = new Set(calendars.map((calendar) => calendar._id));
+
     const allEvents = await ctx.db
       .query("events")
       .withIndex("by_start", (q) => q.gte("start", args.fromStart))
       .collect();
 
     const toDelete = allEvents.filter(
-      (e) => e.recurrence === args.recurrenceId
+      (event) =>
+        event.recurrence === args.recurrenceId &&
+        calendarIds.has(event.calendarId)
     );
 
-    await Promise.all(toDelete.map((e) => ctx.db.delete(e._id)));
+    await Promise.all(toDelete.map((event) => ctx.db.delete(event._id)));
     return { deleted: toDelete.length };
-  }
+  },
 });
 
 export const seedDemo = mutation({
   args: {},
   handler: async (ctx) => {
-    const existing = await ctx.db.query("events").first();
-    if (existing) {
-      return { seeded: false };
-    }
-
-    const now = Date.now();
-    const userId = await ctx.db.insert("users", {
-      name: "Alex Johnson",
-      email: "alex@example.com",
-      timezone: "America/Los_Angeles",
-      preferences: {
-        weekStart: "Mon",
-        quietHours: ["9:00 PM - 7:00 AM"],
-        defaultBuffers: 15
-      },
-      createdAt: now
-    });
-    const workspaceId = await ctx.db.insert("workspaces", {
-      name: "Family HQ",
-      ownerId: userId,
-      plan: "starter",
-      createdAt: now
-    });
-    await ctx.db.insert("memberships", {
-      userId,
-      workspaceId,
-      role: "owner",
-      createdAt: now
-    });
-    const calendarId = await ctx.db.insert("calendars", {
-      workspaceId,
-      provider: "convex",
-      externalId: `family-${workspaceId}`,
-      syncStatus: "ready",
-      name: "Family Calendar",
-      timezone: "America/Los_Angeles"
-    });
-
-    // Create events relative to today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dayOfWeek = today.getDay();
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-
-    const buildDate = (dayOffset: number, hour: number, minute = 0) => {
-      const date = new Date(today);
-      date.setDate(today.getDate() + mondayOffset + dayOffset);
-      date.setHours(hour, minute, 0, 0);
-      return date.getTime();
-    };
-
-    const events = [
-      {
-        title: "School drop-off",
-        start: buildDate(0, 7, 30),
-        end: buildDate(0, 8, 0),
-        location: "Sunrise Elementary",
-        description: "Remember to bring art supplies"
-      },
-      {
-        title: "Team standup",
-        start: buildDate(0, 9, 0),
-        end: buildDate(0, 9, 30),
-        location: "Google Meet",
-        description: "Daily sync with the team"
-      },
-      {
-        title: "Grocery pickup",
-        start: buildDate(0, 17, 0),
-        end: buildDate(0, 17, 30),
-        location: "Whole Foods",
-        description: "Order #4521"
-      },
-      {
-        title: "Lunch with grandparents",
-        start: buildDate(1, 12, 0),
-        end: buildDate(1, 13, 30),
-        location: "Olive Garden",
-        description: "Monthly family lunch"
-      },
-      {
-        title: "Piano lesson",
-        start: buildDate(1, 16, 0),
-        end: buildDate(1, 17, 0),
-        location: "Music Academy",
-        description: "Jamie's weekly lesson"
-      },
-      {
-        title: "Dentist appointment",
-        start: buildDate(2, 10, 0),
-        end: buildDate(2, 10, 45),
-        location: "Oak Street Dental",
-        description: "Regular checkup for Jamie"
-      },
-      {
-        title: "Book club meeting",
-        start: buildDate(2, 14, 0),
-        end: buildDate(2, 15, 30),
-        location: "Public Library",
-        description: "Discussing 'The Midnight Library'"
-      },
-      {
-        title: "Soccer practice",
-        start: buildDate(3, 16, 0),
-        end: buildDate(3, 17, 30),
-        location: "Community Field",
-        description: "Bring water and snacks"
-      },
-      {
-        title: "Parent-teacher conference",
-        start: buildDate(4, 15, 0),
-        end: buildDate(4, 15, 45),
-        location: "Sunrise Elementary",
-        description: "Meeting with Ms. Thompson"
-      },
-      {
-        title: "Movie matinee",
-        start: buildDate(5, 14, 0),
-        end: buildDate(5, 16, 30),
-        location: "AMC Theater",
-        description: "Family movie outing"
-      },
-      {
-        title: "Farmers market",
-        start: buildDate(6, 9, 0),
-        end: buildDate(6, 11, 0),
-        location: "Downtown Market",
-        description: "Weekly groceries"
-      },
-      {
-        title: "Brunch with friends",
-        start: buildDate(6, 11, 30),
-        end: buildDate(6, 13, 0),
-        location: "The Breakfast Club",
-        description: "Monthly catch-up"
-      }
-    ];
-
-    await Promise.all(
-      events.map((event) =>
-        ctx.db.insert("events", {
-          calendarId,
-          title: event.title,
-          description: event.description,
-          start: event.start,
-          end: event.end,
-          location: event.location,
-          updatedAt: now,
-          createdAt: now
-        })
-      )
-    );
-
-    return { seeded: true };
-  }
+    const result = await ensureOnboardingSeedData(ctx);
+    return { seeded: result.seededEvents };
+  },
 });

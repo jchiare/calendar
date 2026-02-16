@@ -1,7 +1,7 @@
 # Calendar Web App Plan (AI-Assisted, Chat-Driven)
 
 ## Vision
-A full-featured calendar app with a smart AI side panel. The calendar is the main event — big, visual, familiar. But instead of clicking through forms to create events, you type naturally into a compact chat panel on the right. The AI figures out everything: timing, duration, who's involved, where it is. You glance at a small inline confirmation card and tap "Add" — done.
+An AI-first household operating tool that plans, schedules, and proactively helps before problems happen. The calendar remains the command center, but the assistant uses household context to act early: warn when food is running low, flag when traffic puts someone at risk of being late, and surface opportunities like cheaper flights during newly free time.
 
 ## Layout
 
@@ -36,6 +36,40 @@ A full-featured calendar app with a smart AI side panel. The calendar is the mai
 - **Left ~70%**: Full weekly calendar grid (existing drag/drop/resize stays)
 - **Right ~30%**: Compact AI chat panel (always visible, no toggle needed)
 - Calendar still supports manual click-to-create as a fallback
+
+## Household Multi-Person Model
+
+- A `workspace` represents one household.
+- Each person in the home gets a member profile with role-based permissions (`owner`, `adult`, `caregiver`, `child-view`, `guest`).
+- Each event should track `ownerUserId` and participant member IDs so AI can reason about "who is affected."
+- Household view combines:
+  - Shared calendar (family logistics, bills, appointments, travel)
+  - Personal calendars (school/work/extracurricular)
+- AI should always explain who an action affects before confirming edits to shared events.
+
+## Household Onboarding Flow
+
+1. Create household workspace and pick home timezone.
+2. Add members (name, relationship, role, optional age group).
+3. Connect each member's calendar(s) or start with local Convex calendars.
+4. Set household defaults:
+   - working/school hours
+   - quiet hours
+   - driving and prep-time buffers
+5. Configure AI guardrails:
+   - auto-add vs confirm-first
+   - which members AI can edit directly
+   - notification preferences per member
+6. Run a first-week setup pass:
+   - import recurring routines
+   - detect conflicts
+   - suggest fixes for approval
+
+## Proactive Assistant Scope
+
+- **Home inventory**: detect low-fridge pantry staples and suggest reorder windows around existing errands.
+- **Travel-time risk**: detect higher-than-usual traffic and warn early with leave-now recommendations.
+- **Opportunity detection**: identify unexpected free windows and alert on timely opportunities (for example, cheaper flight windows).
 
 ## Core UX Flow
 
@@ -125,13 +159,13 @@ Coffee with George
 ## Tech Stack
 - **Frontend**: Next.js 16 (App Router), TypeScript, Tailwind CSS
 - **Backend**: Convex (realtime DB, functions, auth)
-- **AI**: Anthropic Claude API with structured tool calling
+- **AI**: OpenAI Responses API with structured tool calling
 - **Auth**: Convex Auth + OAuth (Google)
 
 ## AI Backend Architecture
 
 ### Tool-calling approach
-The AI uses Claude with structured tool calls:
+The AI uses OpenAI Responses with structured tool calls:
 - `create_event({ title, start, end, location?, attendees?, notes? })` → returns draft for confirmation
 - `update_event({ id, changes })` → returns diff for confirmation
 - `delete_event({ id })` → returns event details for confirmation
@@ -139,8 +173,8 @@ The AI uses Claude with structured tool calls:
 - `check_availability({ date_range })` → returns free/busy slots
 
 ### Draft flow
-1. User message → Claude API with tools + system prompt (smart inference rules)
-2. Claude calls tool → returns structured event proposal (not saved yet)
+1. User message → OpenAI Responses API with tools + system prompt (smart inference rules)
+2. OpenAI calls tool → returns structured event proposal (not saved yet)
 3. Frontend renders confirmation card + ghost event
 4. User confirms → Convex mutation saves the event
 5. Real-time subscription updates calendar
@@ -161,9 +195,15 @@ No separate `eventDrafts` table — drafts live in client state until confirmed.
 
 ## Implementation Plan
 
-### Phase 1: AI Chat Panel + Smart Create (current focus)
+### Phase 0: Household Foundation
+1. Add household setup flow (create workspace, invite members, assign roles)
+2. Introduce event ownership + participant linkage for member-aware AI actions
+3. Scope all event queries by active workspace to avoid cross-household mixing
+4. Add permission checks for shared-event edits and deletions
+
+### Phase 1: AI Chat Panel + Smart Create
 1. Add chat panel to the right side of calendar page (split layout)
-2. Integrate Claude API via Convex action (server-side)
+2. Integrate OpenAI Responses API via Convex action (server-side)
 3. Implement smart inference (duration by type, attendees, location parsing)
 4. Build inline confirmation card component
 5. Add ghost/preview event rendering on calendar
