@@ -100,6 +100,17 @@ const MEMBER_DOT: Record<string, string> = {
   teal: "bg-teal-500",
 };
 
+const MEMBER_COLOR_OPTIONS = [
+  { name: "indigo", bg: "bg-indigo-500", ring: "ring-indigo-300" },
+  { name: "rose", bg: "bg-rose-500", ring: "ring-rose-300" },
+  { name: "amber", bg: "bg-amber-500", ring: "ring-amber-300" },
+  { name: "emerald", bg: "bg-emerald-500", ring: "ring-emerald-300" },
+  { name: "cyan", bg: "bg-cyan-500", ring: "ring-cyan-300" },
+  { name: "purple", bg: "bg-purple-500", ring: "ring-purple-300" },
+  { name: "orange", bg: "bg-orange-500", ring: "ring-orange-300" },
+  { name: "teal", bg: "bg-teal-500", ring: "ring-teal-300" },
+];
+
 function HouseholdPopover({
   household,
   onClose,
@@ -108,6 +119,14 @@ function HouseholdPopover({
   onClose: () => void;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const addMember = useMutation(api.household.addMember);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(() => {
+    const usedColors = new Set(household.members.map((m) => m.color));
+    return MEMBER_COLOR_OPTIONS.find((c) => !usedColors.has(c.name))?.name ?? "indigo";
+  });
+  const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -126,30 +145,49 @@ function HouseholdPopover({
     };
   }, [onClose]);
 
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    setIsAdding(true);
+    try {
+      await addMember({ name: newName.trim(), color: newColor });
+      setNewName("");
+      setShowAddForm(false);
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
   return (
     <div
       ref={popoverRef}
-      className="absolute left-0 top-full z-50 mt-2 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+      className="absolute left-0 top-full z-50 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
     >
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-        Household
-      </p>
-      <p className="mt-1 text-sm font-semibold text-slate-900">
-        {household.name}
-      </p>
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-900">
+          {household.name}
+        </p>
+        <button
+          onClick={onClose}
+          className="cursor-pointer rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
 
       <div className="mt-3 border-t border-slate-100 pt-3">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-          Members ({household.members.length})
+          Members
         </p>
-        <ul className="mt-2 space-y-1.5">
+        <ul className="mt-2 space-y-1">
           {household.members.map((member) => (
             <li
               key={member._id}
               className="flex items-center gap-2.5 rounded-lg px-2 py-1.5"
             >
               <span
-                className={`inline-block h-3 w-3 rounded-full ${
+                className={`inline-block h-3 w-3 flex-shrink-0 rounded-full ${
                   MEMBER_DOT[member.color] ?? "bg-slate-400"
                 }`}
               />
@@ -165,6 +203,63 @@ function HouseholdPopover({
             </li>
           ))}
         </ul>
+
+        {/* Add member */}
+        {!showAddForm ? (
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="mt-2 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add member
+          </button>
+        ) : (
+          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Name"
+              autoFocus
+              className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAdd();
+                if (e.key === "Escape") setShowAddForm(false);
+              }}
+            />
+            <div className="mt-2 flex gap-1">
+              {MEMBER_COLOR_OPTIONS.map((c) => (
+                <button
+                  key={c.name}
+                  onClick={() => setNewColor(c.name)}
+                  className={`h-5 w-5 cursor-pointer rounded-full ${c.bg} transition-all ${
+                    newColor === c.name
+                      ? `ring-2 ${c.ring} ring-offset-1`
+                      : "opacity-40 hover:opacity-70"
+                  }`}
+                  aria-label={c.name}
+                />
+              ))}
+            </div>
+            <div className="mt-2 flex justify-end gap-1.5">
+              <button
+                onClick={() => setShowAddForm(false)}
+                className="cursor-pointer rounded-md px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAdd}
+                disabled={!newName.trim() || isAdding}
+                className="cursor-pointer rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+              >
+                {isAdding ? "Adding..." : "Add"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1474,21 +1569,36 @@ export default function CalendarPage() {
     <main className="mx-auto max-w-[1700px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <button
-              onClick={() => setHouseholdPopoverOpen((prev) => !prev)}
-              className="cursor-pointer text-xl font-semibold text-slate-900 hover:text-indigo-600 transition-colors"
-            >
-              {household?.name ?? "Calendar"}
-            </button>
-            {householdPopoverOpen && household && (
-              <HouseholdPopover
-                household={household as HouseholdData}
-                onClose={() => setHouseholdPopoverOpen(false)}
-              />
-            )}
-          </div>
-          {household && household.members.length > 1 && (
+          <h1 className="text-xl font-semibold text-slate-900">
+            {household?.name ?? "Calendar"}
+          </h1>
+          {household && (
+            <div className="relative">
+              <button
+                onClick={() => setHouseholdPopoverOpen((prev) => !prev)}
+                className={`cursor-pointer rounded-full border p-1.5 transition-colors ${
+                  householdPopoverOpen
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-600"
+                    : "border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700"
+                }`}
+                aria-label="Manage household"
+                title="Manage household"
+              >
+                {/* People icon */}
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </button>
+              {householdPopoverOpen && (
+                <HouseholdPopover
+                  household={household as HouseholdData}
+                  onClose={() => setHouseholdPopoverOpen(false)}
+                />
+              )}
+            </div>
+          )}
+          <div className="mx-1 h-5 w-px bg-slate-200" />
+          {household && household.members.length > 0 && (
             <MemberBar
               members={household.members as HouseholdMember[]}
               activeMemberId={activeMemberId}
