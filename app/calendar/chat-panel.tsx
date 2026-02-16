@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
 import type { AIResponse, EventProposal } from "../../convex/ai";
 
 type ChatMessage = {
@@ -536,8 +537,12 @@ function ConfirmationCard({
 
 export default function ChatPanel({
   onGhostEventChange,
+  workspaceId,
+  actorUserId,
 }: {
   onGhostEventChange: (ghost: GhostEvent | null) => void;
+  workspaceId?: Id<"workspaces">;
+  actorUserId?: Id<"users">;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -643,7 +648,13 @@ export default function ChatPanel({
   const handleConfirm = useCallback(
     async (proposal: EventProposal) => {
       try {
+        if (!workspaceId || !actorUserId) {
+          throw new Error("Household context is still loading.");
+        }
+
         await createEvent({
+          workspaceId,
+          actorUserId,
           title: proposal.title,
           start: proposal.start,
           end: proposal.end,
@@ -671,7 +682,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [createEvent, onGhostEventChange]
+    [createEvent, onGhostEventChange, workspaceId, actorUserId]
   );
 
   const handleBatchConfirm = useCallback(
@@ -681,7 +692,13 @@ export default function ChatPanel({
       recurrenceId?: string
     ) => {
       try {
+        if (!workspaceId || !actorUserId) {
+          throw new Error("Household context is still loading.");
+        }
+
         await batchCreateEvents({
+          workspaceId,
+          actorUserId,
           events: proposals.map((p) => ({
             title: p.title,
             start: p.start,
@@ -717,7 +734,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [batchCreateEvents, onGhostEventChange]
+    [batchCreateEvents, onGhostEventChange, workspaceId, actorUserId]
   );
 
   const handleTweak = useCallback((messageId: string) => {
@@ -739,7 +756,13 @@ export default function ChatPanel({
   const handleSaveTweak = useCallback(
     async (messageId: string, updatedProposal: EventProposal) => {
       try {
+        if (!workspaceId || !actorUserId) {
+          throw new Error("Household context is still loading.");
+        }
+
         await createEvent({
+          workspaceId,
+          actorUserId,
           title: updatedProposal.title,
           start: updatedProposal.start,
           end: updatedProposal.end,
@@ -767,7 +790,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [createEvent, onGhostEventChange]
+    [createEvent, onGhostEventChange, workspaceId, actorUserId]
   );
 
   const handleKeyDown = useCallback(

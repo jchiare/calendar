@@ -4,7 +4,7 @@ import Providers from "./providers";
 
 export const metadata: Metadata = {
   title: "Family Calendar",
-  description: "A unified family calendar with AI scheduling."
+  description: "An AI-first household planner for scheduling, coordination, and proactive alerts."
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
