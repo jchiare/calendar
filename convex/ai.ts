@@ -1,282 +1,360 @@
 "use node";
 
 import { action } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import OpenAI from "openai";
 
-// Parse natural language time expressions
-function parseTime(text: string): { hour: number; minute: number } | null {
-  const timePatterns = [
-    /(\d{1,2}):(\d{2})\s*(am|pm)/i,
-    /(\d{1,2})\s*(am|pm)/i,
-    /(\d{1,2}):(\d{2})/,
-  ];
+// Event proposal returned to the frontend for confirmation
+export type EventProposal = {
+  title: string;
+  start: number;
+  end: number;
+  location?: string;
+  attendees?: string[];
+  description?: string;
+};
 
-  for (const pattern of timePatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      let hour = parseInt(match[1], 10);
-      const minute = match[2] && !match[2].match(/am|pm/i) ? parseInt(match[2], 10) : 0;
-      const meridiem = match[3] || match[2];
-
-      if (meridiem && typeof meridiem === 'string') {
-        if (meridiem.toLowerCase() === 'pm' && hour !== 12) {
-          hour += 12;
-        } else if (meridiem.toLowerCase() === 'am' && hour === 12) {
-          hour = 0;
-        }
-      }
-
-      return { hour, minute };
-    }
-  }
-
-  return null;
-}
-
-// Parse date expressions like "tomorrow", "next monday", "feb 15"
-function parseDate(text: string): Date {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const lowerText = text.toLowerCase();
-
-  if (lowerText.includes('tomorrow')) {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow;
-  }
-
-  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  for (let i = 0; i < days.length; i++) {
-    if (lowerText.includes(days[i])) {
-      const targetDay = i;
-      const currentDay = today.getDay();
-      let daysUntil = targetDay - currentDay;
-      if (daysUntil <= 0) daysUntil += 7;
-      const date = new Date(today);
-      date.setDate(today.getDate() + daysUntil);
-      return date;
-    }
-  }
-
-  return today;
-}
-
-// Extract event title by removing time-related words
-function extractTitle(text: string): string {
-  let title = text
-    .replace(/^(add|create|schedule|set up|book|make)\s+/i, '')
-    .replace(/^(a|an)\s+/i, '');
-
-  title = title
-    .replace(/\b(at|for|on|from|to)\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
-    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
-    .replace(/\b(tomorrow|today|next\s+\w+day)\b/gi, '')
-    .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '');
-
-  title = title
-    .replace(/^(meeting\s+to|to)\s+/i, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (title.length < 3) {
-    const match = text.match(/(?:to|for)\s+(.+?)(?:\s+at|\s+on|$)/i);
-    if (match) {
-      title = match[1].trim();
-    } else {
-      title = 'New event';
-    }
-  }
-
-  return title.charAt(0).toUpperCase() + title.slice(1);
-}
-
-// Parse a natural language command using regex (fallback)
-function parseCommand(message: string): {
-  action: 'create' | 'unknown';
-  title?: string;
-  date?: Date;
-  startTime?: { hour: number; minute: number };
-  duration?: number;
-} {
-  const lowerMessage = message.toLowerCase();
-
-  const createPatterns = [
-    /^(add|create|schedule|set up|book|make)/i,
-    /meeting|appointment|event|reminder/i,
-  ];
-
-  const isCreate = createPatterns.some(p => p.test(lowerMessage));
-
-  if (isCreate) {
-    const time = parseTime(message);
-    const date = parseDate(message);
-    const title = extractTitle(message);
-
-    return {
-      action: 'create',
-      title,
-      date,
-      startTime: time || { hour: 12, minute: 0 },
-      duration: 60,
-    };
-  }
-
-  return { action: 'unknown' };
-}
-
-function regexFallback(message: string): {
-  success: boolean;
+export type AIResponse = {
+  type: "create_event" | "create_events" | "message";
   message: string;
-  event?: { title: string; start: number; end: number };
-} {
-  const parsed = parseCommand(message);
+  proposal?: EventProposal;
+  proposals?: EventProposal[];
+  recurrenceId?: string;
+};
 
-  if (parsed.action === 'create' && parsed.title && parsed.date && parsed.startTime) {
-    const startDate = new Date(parsed.date);
-    startDate.setHours(parsed.startTime.hour, parsed.startTime.minute, 0, 0);
-    const start = startDate.getTime();
-
-    const endDate = new Date(startDate);
-    endDate.setMinutes(endDate.getMinutes() + (parsed.duration || 60));
-    const end = endDate.getTime();
-
-    const timeStr = startDate.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-    const dateStr = startDate.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    });
-
-    return {
-      success: true,
-      message: `Created "${parsed.title}" for ${dateStr} at ${timeStr}`,
-      event: { title: parsed.title, start, end },
-    };
-  }
-
-  return {
-    success: false,
-    message: "I didn't understand that command. Try something like:\n• \"Add 3pm meeting to take out trash\"\n• \"Schedule dentist appointment at 2:30pm tomorrow\"\n• \"Create team standup at 9am on Monday\"",
-  };
-}
+const RECURRING_WEEKS = 8;
 
 export const processMessage = action({
   args: {
     message: v.string(),
+    conversationHistory: v.optional(
+      v.array(
+        v.object({
+          role: v.string(),
+          content: v.string(),
+        })
+      )
+    ),
+    timezoneOffset: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<{ success: boolean; message: string; event?: { title: string; start: number; end: number } }> => {
+  handler: async (_ctx, args): Promise<AIResponse> => {
+    // timezoneOffset: minutes from UTC (e.g. 480 for PST).
+    // Server runs in UTC, so we adjust timestamps to match the user's local time.
+    const tzOffset = args.timezoneOffset ?? 0;
     const apiKey = process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
-      // Fallback to regex parsing
-      const result = regexFallback(args.message);
-      if (result.success && result.event) {
-        await ctx.runMutation(internal.aiMutations.createEventFromAI, {
-          title: result.event.title,
-          start: result.event.start,
-          end: result.event.end,
-        });
-      }
-      return result;
+      return {
+        type: "message",
+        message: "Please set OPENAI_API_KEY in your Convex environment to use the AI assistant.",
+      };
     }
 
     try {
-      const openai = new OpenAI({ apiKey });
+      const client = new OpenAI({ apiKey });
 
       const today = new Date();
-      const todayStr = today.toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
+      const todayStr = today.toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
       });
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a calendar assistant. Today is ${todayStr}. Extract structured event data from the user's message. Respond ONLY with a JSON object (no markdown, no code fences) with these fields:
-- "action": "create" if the user wants to add/create/schedule an event, otherwise "unknown"
-- "title": the event title (string)
-- "date": the date in YYYY-MM-DD format
-- "startHour": start hour in 24h format (number)
-- "startMinute": start minute (number)
-- "endHour": end hour in 24h format (number)
-- "endMinute": end minute (number)
-- "description": optional description (string or null)
+      const systemPrompt = `You are a smart calendar assistant. Today is ${todayStr}.
 
-If no end time is specified, default to 1 hour after start. If no time is specified, default to 12:00. "tomorrow" means the day after today. "next Monday" means the coming Monday.`
+When the user wants to create an event, use the create_event function. You must infer:
+
+DURATION RULES (apply these based on event type keywords):
+- coffee, lunch, drinks → 30 minutes
+- meeting, sync, standup → 30 minutes
+- dinner, movie → 90 minutes
+- workout, gym, run → 60 minutes
+- dentist, doctor, appointment → 60 minutes
+- "quick chat", "quick call" → 15 minutes
+- 1:1, one-on-one → 30 minutes
+- workshop, training → 120 minutes
+- preschool, school, daycare, camp → use explicit end time if given, otherwise full day (7hr)
+- Default (unrecognized) → 60 minutes
+- IMPORTANT: If user gives an explicit time range like "9am to 4pm", use that to calculate duration. Don't use the defaults above.
+
+TIME INFERENCE:
+- "morning" → 9:00 AM
+- "afternoon" → 2:00 PM
+- "evening" → 6:00 PM
+- If just a number like "3" or "at 3", infer PM for typical events
+- "tomorrow" means the next day from today
+- "next Tuesday" means the coming Tuesday
+
+RECURRING EVENTS:
+- If the user mentions multiple days like "monday to friday", "m-f", "weekdays", "t-f", "every tuesday and thursday", etc., set recurringDays to the array of day numbers (0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat).
+- Day abbreviations: m=Mon, t/tu=Tue, w=Wed, th=Thu, f=Fri, sa=Sat, su=Sun
+- "m-f" or "monday to friday" or "weekdays" → [1,2,3,4,5]
+- "t-f" or "tuesday to friday" → [2,3,4,5]
+- "MWF" or "monday wednesday friday" → [1,3,5]
+- For recurring events, set the date to the FIRST occurrence (next matching day from today).
+- Set recurringWeeks to 8 by default unless the user specifies otherwise.
+
+SMART PARSING:
+- "with George" → attendee "George"
+- "at Blue Bottle" or "laurel hill" after an event type → location "Blue Bottle" / "Laurel Hill"
+- Separate the location from the event title. E.g., "ellie preschool laurel hill" → title "Ellie Preschool", location "Laurel Hill"
+- Capitalize titles properly (e.g., "coffee with george" → "Coffee with George")
+
+Keep your responses very short and friendly. Don't be overly formal.`;
+
+      // Build input items for multi-turn context
+      const input: OpenAI.Responses.ResponseInputItem[] = [];
+      if (args.conversationHistory) {
+        for (const msg of args.conversationHistory) {
+          if (msg.role === "user" || msg.role === "assistant") {
+            input.push({
+              type: "message",
+              role: msg.role as "user" | "assistant",
+              content: msg.content,
+            });
+          }
+        }
+      }
+      input.push({ type: "message", role: "user", content: args.message });
+
+      const tools: OpenAI.Responses.Tool[] = [
+        {
+          type: "function",
+          name: "create_event",
+          description:
+            "Create a calendar event (single or recurring). Returns a proposal for user confirmation.",
+          parameters: {
+            type: "object",
+            properties: {
+              title: {
+                type: "string",
+                description:
+                  "Event title, properly capitalized (e.g., 'Coffee with George', 'Ellie Preschool')",
+              },
+              date: {
+                type: "string",
+                description: "Start date in YYYY-MM-DD format. For recurring events, this is the first occurrence.",
+              },
+              startHour: {
+                type: "number",
+                description: "Start hour in 24h format (0-23)",
+              },
+              startMinute: {
+                type: "number",
+                description: "Start minute (0-59)",
+              },
+              durationMinutes: {
+                type: "number",
+                description:
+                  "Duration in minutes. Use explicit end time if given (e.g., '9am to 4pm' = 420 min), otherwise infer from event type.",
+              },
+              location: {
+                type: ["string", "null"],
+                description:
+                  "Location if mentioned (e.g., 'Laurel Hill', 'Blue Bottle'), or null. Separate from title.",
+              },
+              attendees: {
+                type: ["array", "null"],
+                items: { type: "string" },
+                description:
+                  "Names of people mentioned (e.g., ['George']), or null",
+              },
+              description: {
+                type: ["string", "null"],
+                description: "Optional notes or description, or null",
+              },
+              recurringDays: {
+                type: ["array", "null"],
+                items: { type: "number" },
+                description:
+                  "For recurring events: array of day-of-week numbers (0=Sun, 1=Mon, ..., 6=Sat). E.g., [1,2,3,4,5] for Mon-Fri. null for single events.",
+              },
+              recurringWeeks: {
+                type: ["number", "null"],
+                description:
+                  "For recurring events: number of weeks to repeat. Default 8. null for single events.",
+              },
+            },
+            required: [
+              "title",
+              "date",
+              "startHour",
+              "startMinute",
+              "durationMinutes",
+              "location",
+              "attendees",
+              "description",
+              "recurringDays",
+              "recurringWeeks",
+            ],
+            additionalProperties: false,
           },
-          { role: "user", content: args.message }
-        ],
-        temperature: 0,
+          strict: true,
+        },
+      ];
+
+      const response = await client.responses.create({
+        model: "gpt-5.2",
+        instructions: systemPrompt,
+        input,
+        tools,
+        store: false,
       });
 
-      const content = completion.choices[0]?.message?.content?.trim();
-      if (!content) throw new Error("Empty response from OpenAI");
+      // Process output items
+      for (const item of response.output) {
+        if (item.type === "function_call" && item.name === "create_event") {
+          const parsedArgs = JSON.parse(item.arguments) as {
+            title: string;
+            date: string;
+            startHour: number;
+            startMinute: number;
+            durationMinutes: number;
+            location: string | null;
+            attendees: string[] | null;
+            description: string | null;
+            recurringDays: number[] | null;
+            recurringWeeks: number | null;
+          };
 
-      const parsed = JSON.parse(content);
+          const [year, month, day] = parsedArgs.date.split("-").map(Number);
 
-      if (parsed.action === 'create' && parsed.title && parsed.date) {
-        const [year, month, day] = parsed.date.split('-').map(Number);
-        const startHour = parsed.startHour ?? 12;
-        const startMinute = parsed.startMinute ?? 0;
-        const endHour = parsed.endHour ?? startHour + 1;
-        const endMinute = parsed.endMinute ?? 0;
-        const startDate = new Date(year, month - 1, day, startHour, startMinute, 0, 0);
-        const endDate = new Date(year, month - 1, day, endHour, endMinute, 0, 0);
+          const durationLabel =
+            parsedArgs.durationMinutes >= 60
+              ? `${(parsedArgs.durationMinutes / 60).toFixed(parsedArgs.durationMinutes % 60 === 0 ? 0 : 1)}hr`
+              : `${parsedArgs.durationMinutes} min`;
 
-        const start = startDate.getTime();
-        const end = endDate.getTime();
+          // --- Recurring event ---
+          if (parsedArgs.recurringDays && parsedArgs.recurringDays.length > 0) {
+            const weeks = parsedArgs.recurringWeeks ?? RECURRING_WEEKS;
+            const proposals: EventProposal[] = [];
 
-        await ctx.runMutation(internal.aiMutations.createEventFromAI, {
-          title: parsed.title,
-          description: parsed.description || undefined,
-          start,
-          end,
-        });
+            // Find first date's day of week to calculate offsets
+            const firstDate = new Date(Date.UTC(year, month - 1, day));
+            const firstDow = firstDate.getUTCDay();
 
-        const timeStr = startDate.toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-        });
-        const dateStr = startDate.toLocaleDateString('en-US', {
-          weekday: 'long',
-          month: 'long',
-          day: 'numeric',
-        });
+            for (let week = 0; week < weeks; week++) {
+              for (const dayNum of parsedArgs.recurringDays) {
+                let daysOffset = dayNum - firstDow;
+                if (daysOffset < 0) daysOffset += 7;
+                daysOffset += week * 7;
 
+                const startMs = Date.UTC(year, month - 1, day + daysOffset, parsedArgs.startHour, parsedArgs.startMinute)
+                  + tzOffset * 60 * 1000;
+                const endMs = startMs + parsedArgs.durationMinutes * 60 * 1000;
+
+                proposals.push({
+                  title: parsedArgs.title,
+                  start: startMs,
+                  end: endMs,
+                  location: parsedArgs.location ?? undefined,
+                  attendees: parsedArgs.attendees ?? undefined,
+                  description: parsedArgs.description ?? undefined,
+                });
+              }
+            }
+
+            proposals.sort((a, b) => a.start - b.start);
+
+            const dayLabels = parsedArgs.recurringDays
+              .sort((a, b) => a - b)
+              .map((d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]);
+            const dayRange = dayLabels.length > 2
+              ? `${dayLabels[0]}–${dayLabels[dayLabels.length - 1]}`
+              : dayLabels.join(", ");
+
+            const fmtHr = (h: number, m: number) => {
+              const ampm = h >= 12 ? "PM" : "AM";
+              const h12 = h % 12 || 12;
+              return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+            };
+
+            const endHour = parsedArgs.startHour + Math.floor(parsedArgs.durationMinutes / 60);
+            const endMin = parsedArgs.startMinute + (parsedArgs.durationMinutes % 60);
+
+            const recurrenceId = `recurring-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+            let msg = `Got it! I'll add ${parsedArgs.title} every ${dayRange}, ${fmtHr(parsedArgs.startHour, parsedArgs.startMinute)}–${fmtHr(endHour, endMin)} for ${weeks} weeks (${proposals.length} events).`;
+            if (parsedArgs.location) {
+              msg += ` Location: ${parsedArgs.location}.`;
+            }
+            msg += ` You can delete any single one later, or remove all future ones at once.`;
+
+            return {
+              type: "create_events",
+              message: msg,
+              proposal: proposals[0],
+              proposals,
+              recurrenceId,
+            };
+          }
+
+          // --- Single event ---
+          const startMs = Date.UTC(year, month - 1, day, parsedArgs.startHour, parsedArgs.startMinute)
+            + tzOffset * 60 * 1000;
+          const endMs = startMs + parsedArgs.durationMinutes * 60 * 1000;
+
+          const proposal: EventProposal = {
+            title: parsedArgs.title,
+            start: startMs,
+            end: endMs,
+            location: parsedArgs.location ?? undefined,
+            attendees: parsedArgs.attendees ?? undefined,
+            description: parsedArgs.description ?? undefined,
+          };
+
+          let message = formatTimestamp(startMs, endMs, durationLabel);
+          if (parsedArgs.location) {
+            message += ` · ${parsedArgs.location}`;
+          }
+
+          return {
+            type: "create_event",
+            message,
+            proposal,
+          };
+        }
+      }
+
+      // Plain text response
+      if (response.output_text) {
         return {
-          success: true,
-          message: `Created "${parsed.title}" for ${dateStr} at ${timeStr}`,
-          event: { title: parsed.title, start, end },
+          type: "message",
+          message: response.output_text,
         };
       }
 
       return {
-        success: false,
-        message: "I didn't understand that command. Try something like:\n• \"Add 3pm meeting to take out trash\"\n• \"Schedule dentist appointment at 2:30pm tomorrow\"\n• \"Create team standup at 9am on Monday\"",
+        type: "message",
+        message: "I'm not sure what you'd like to do. Try something like \"coffee with George tomorrow at 3\".",
       };
-    } catch {
-      // Fallback to regex if OpenAI fails
-      const result = regexFallback(args.message);
-      if (result.success && result.event) {
-        await ctx.runMutation(internal.aiMutations.createEventFromAI, {
-          title: result.event.title,
-          start: result.event.start,
-          end: result.event.end,
-        });
-      }
-      return result;
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      return {
+        type: "message",
+        message: `Something went wrong talking to the AI: ${errorMsg}. Please try again.`,
+      };
     }
   },
 });
+
+// Format timestamps into a readable message (using UTC to avoid server TZ issues)
+function formatTimestamp(startMs: number, endMs: number, durationLabel: string): string {
+  const s = new Date(startMs);
+  const e = new Date(endMs);
+  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][s.getUTCDay()];
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months[s.getUTCMonth()];
+  const day = s.getUTCDate();
+
+  const fmtTime = (d: Date) => {
+    let h = d.getUTCHours();
+    const m = d.getUTCMinutes();
+    const ampm = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2, "0")} ${ampm}`;
+  };
+
+  return `${weekday}, ${month} ${day} ${fmtTime(s)}–${fmtTime(e)} · ${durationLabel}`;
+}

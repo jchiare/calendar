@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import ChatPanel from "./chat-panel";
 
 type EventData = Doc<"events">;
 
@@ -77,11 +78,136 @@ function hoursToTimeString(hours: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// Lightweight popover for confirming event deletion.
+// Used both from the hover × button on events AND from the edit modal's trash icon.
+function DeletePopover({
+  event,
+  position,
+  onDeleteSingle,
+  onDeleteFuture,
+  onClose,
+}: {
+  event: EventData;
+  position: { x: number; y: number };
+  onDeleteSingle: () => Promise<void>;
+  onDeleteFuture?: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [isDeleting, setIsDeleting] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const isRecurring = !!event.recurrence;
+
+  // Close on click outside
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    // Close on Escape
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  // Clamp popover to viewport
+  const [adjustedPos, setAdjustedPos] = useState(position);
+  useEffect(() => {
+    if (!popoverRef.current) return;
+    const rect = popoverRef.current.getBoundingClientRect();
+    let { x, y } = position;
+    if (x + rect.width > window.innerWidth - 16) x = window.innerWidth - rect.width - 16;
+    if (y + rect.height > window.innerHeight - 16) y = y - rect.height - 8;
+    if (x < 16) x = 16;
+    if (y < 16) y = 16;
+    setAdjustedPos({ x, y });
+  }, [position]);
+
+  const handleSingle = async () => {
+    setIsDeleting(true);
+    try { await onDeleteSingle(); } finally { setIsDeleting(false); }
+    onClose();
+  };
+  const handleFuture = async () => {
+    if (!onDeleteFuture) return;
+    setIsDeleting(true);
+    try { await onDeleteFuture(); } finally { setIsDeleting(false); }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60]">
+      <div
+        ref={popoverRef}
+        className="fixed w-56 rounded-2xl bg-white p-3 shadow-xl ring-1 ring-slate-200"
+        style={{ left: adjustedPos.x, top: adjustedPos.y }}
+      >
+        <p className="mb-2.5 text-sm font-medium text-slate-900">
+          {isRecurring ? "Delete recurring event" : "Delete this event?"}
+        </p>
+        <div className="flex flex-col gap-1.5">
+          {isRecurring ? (
+            <>
+              <button
+                onClick={handleSingle}
+                disabled={isDeleting}
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Only this event
+              </button>
+              {onDeleteFuture && (
+                <button
+                  onClick={handleFuture}
+                  disabled={isDeleting}
+                  className="flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 cursor-pointer disabled:opacity-50"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  This & all future
+                </button>
+              )}
+            </>
+          ) : (
+            <button
+              onClick={handleSingle}
+              disabled={isDeleting}
+              className="flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 cursor-pointer disabled:opacity-50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            disabled={isDeleting}
+            className="rounded-xl px-3 py-2 text-center text-sm text-slate-500 hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EventModal({
   isOpen,
   onClose,
   onSave,
   onDelete,
+  onDeleteFutureRecurring,
   initialData,
   selectedDate,
   selectedStartTime,
@@ -91,6 +217,7 @@ function EventModal({
   onClose: () => void;
   onSave: (data: EventFormData) => Promise<void>;
   onDelete?: () => Promise<void>;
+  onDeleteFutureRecurring?: () => Promise<void>;
   initialData?: EventData;
   selectedDate?: Date;
   selectedStartTime?: string;
@@ -105,7 +232,7 @@ function EventModal({
     location: ""
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePopoverPos, setDeletePopoverPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (initialData) {
@@ -129,7 +256,7 @@ function EventModal({
         location: ""
       });
     }
-    setShowDeleteConfirm(false);
+    setDeletePopoverPos(null);
   }, [initialData, selectedDate, selectedStartTime, selectedEndTime, isOpen]);
 
   if (!isOpen) return null;
@@ -144,16 +271,6 @@ function EventModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!onDelete) return;
-    setIsSaving(true);
-    try {
-      await onDelete();
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -163,19 +280,38 @@ function EventModal({
         className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
-          aria-label="Close"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-        <h2 className="text-xl font-semibold text-slate-900">
-          {initialData ? "Edit Event" : "New Event"}
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">
+            {initialData ? "Edit Event" : "New Event"}
+          </h2>
+          <div className="flex items-center gap-1">
+            {onDelete && initialData && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  const rect = (e.target as HTMLElement).getBoundingClientRect();
+                  setDeletePopoverPos({ x: rect.left, y: rect.bottom + 8 });
+                }}
+                className="rounded-full p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 cursor-pointer"
+                aria-label="Delete event"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
+              aria-label="Close"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <fieldset disabled={isSaving} className="space-y-4">
           <div>
@@ -266,51 +402,27 @@ function EventModal({
             />
           </div>
           </fieldset>
-          <div className="flex justify-between gap-3 pt-2">
-            <div>
-              {onDelete && !showDeleteConfirm && (
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteConfirm(true)}
-                  disabled={isSaving}
-                  className="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 cursor-pointer disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              )}
-              {onDelete && showDeleteConfirm && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-red-600">Are you sure?</span>
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    disabled={isSaving}
-                    className="rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteConfirm(false)}
-                    disabled={isSaving}
-                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 cursor-pointer disabled:opacity-50"
-              >
-                {isSaving ? "Saving..." : initialData ? "Save Changes" : "Create Event"}
-              </button>
-            </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 cursor-pointer disabled:opacity-50"
+            >
+              {isSaving ? "Saving..." : initialData ? "Save Changes" : "Create Event"}
+            </button>
           </div>
         </form>
+
+        {/* Delete popover (triggered from trash icon in header) */}
+        {deletePopoverPos && initialData && onDelete && (
+          <DeletePopover
+            event={initialData}
+            position={deletePopoverPos}
+            onDeleteSingle={async () => { await onDelete(); }}
+            onDeleteFuture={onDeleteFutureRecurring}
+            onClose={() => setDeletePopoverPos(null)}
+          />
+        )}
       </div>
     </div>
   );
@@ -328,6 +440,18 @@ export default function CalendarPage() {
   const seededRef = useRef(false);
   const currentTimeRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
+
+  // Ghost event from AI chat (pending confirmation)
+  const [ghostEvent, setGhostEvent] = useState<{
+    title: string;
+    start: number;
+    end: number;
+    location?: string;
+  } | null>(null);
+
+  // Delete popover state (for hover × on events)
+  const [deletePopoverEvent, setDeletePopoverEvent] = useState<EventData | null>(null);
+  const [deletePopoverPos, setDeletePopoverPos] = useState<{ x: number; y: number } | null>(null);
 
   // Current time for the time indicator
   const [currentTime, setCurrentTime] = useState(() => new Date());
@@ -373,6 +497,7 @@ export default function CalendarPage() {
   const createEvent = useMutation(api.events.createEvent);
   const updateEvent = useMutation(api.events.updateEvent);
   const deleteEvent = useMutation(api.events.deleteEvent);
+  const deleteRecurringEvents = useMutation(api.events.deleteRecurringEvents);
   const enableAutoDemoSeed =
     process.env.NODE_ENV === "development" &&
     process.env.NEXT_PUBLIC_ENABLE_DEMO_SEED === "true";
@@ -479,6 +604,47 @@ export default function CalendarPage() {
     });
   }, [events, startHour, endHour]);
 
+  // Position ghost event for the calendar overlay
+  const ghostEventPosition = useMemo(() => {
+    if (!ghostEvent) return null;
+
+    const startDate = new Date(ghostEvent.start);
+    const endDate = new Date(ghostEvent.end);
+
+    const dayOfWeek = startDate.getDay();
+    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+
+    // Check if ghost event is in the current week
+    const weekEnd = new Date(currentWeekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    if (startDate < currentWeekStart || startDate >= weekEnd) return null;
+
+    const eventStartHour = startDate.getHours() + startDate.getMinutes() / 60;
+    const eventEndHour = endDate.getHours() + endDate.getMinutes() / 60;
+
+    const top = ((eventStartHour - startHour) / (endHour - startHour)) * 100;
+    const height = ((eventEndHour - eventStartHour) / (endHour - startHour)) * 100;
+
+    return {
+      title: ghostEvent.title,
+      dayIndex,
+      top: Math.max(0, top),
+      height: Math.min(100 - Math.max(0, top), height),
+      startTime: formatTime(startDate),
+      endTime: formatTime(endDate),
+    };
+  }, [ghostEvent, startHour, endHour, currentWeekStart]);
+
+  // Auto-navigate to ghost event's week when it's created
+  useEffect(() => {
+    if (!ghostEvent) return;
+    const ghostDate = new Date(ghostEvent.start);
+    const ghostWeekStart = getWeekStart(ghostDate);
+    if (ghostWeekStart.getTime() !== currentWeekStart.getTime()) {
+      setCurrentWeekStart(ghostWeekStart);
+    }
+  }, [ghostEvent, currentWeekStart]);
+
   const navigateWeek = useCallback((direction: number) => {
     setCurrentWeekStart((prev) => {
       const newDate = new Date(prev);
@@ -541,6 +707,37 @@ export default function CalendarPage() {
     }
   }, [editingEvent, deleteEvent]);
 
+  const handleDeleteFutureRecurring = useCallback(async () => {
+    if (editingEvent?.recurrence) {
+      await deleteRecurringEvents({
+        recurrenceId: editingEvent.recurrence,
+        fromStart: editingEvent.start,
+      });
+      setModalOpen(false);
+      setEditingEvent(null);
+    }
+  }, [editingEvent, deleteRecurringEvents]);
+
+  // Delete via the hover × popover (not through the edit modal)
+  const handlePopoverDeleteSingle = useCallback(async () => {
+    if (deletePopoverEvent) {
+      await deleteEvent({ id: deletePopoverEvent._id });
+      setDeletePopoverEvent(null);
+      setDeletePopoverPos(null);
+    }
+  }, [deletePopoverEvent, deleteEvent]);
+
+  const handlePopoverDeleteFuture = useCallback(async () => {
+    if (deletePopoverEvent?.recurrence) {
+      await deleteRecurringEvents({
+        recurrenceId: deletePopoverEvent.recurrence,
+        fromStart: deletePopoverEvent.start,
+      });
+      setDeletePopoverEvent(null);
+      setDeletePopoverPos(null);
+    }
+  }, [deletePopoverEvent, deleteRecurringEvents]);
+
   const openNewEventModal = useCallback((date?: Date, startTime?: string, endTime?: string) => {
     setEditingEvent(null);
     setSelectedDate(date);
@@ -554,6 +751,8 @@ export default function CalendarPage() {
     setSelectedDate(undefined);
     setSelectedStartTime(undefined);
     setSelectedEndTime(undefined);
+    setDeletePopoverEvent(null);
+    setDeletePopoverPos(null);
     setModalOpen(true);
   }, []);
 
@@ -647,8 +846,9 @@ export default function CalendarPage() {
 
   // Handle event move start (from clicking on event body)
   const handleEventMoveStart = useCallback((e: React.MouseEvent, event: EventData) => {
-    // Don't start move if clicking on resize handles
+    // Don't start move if clicking on resize handles or delete button
     if ((e.target as HTMLElement).closest('[data-resize-handle]')) return;
+    if ((e.target as HTMLElement).closest('[data-delete-button]')) return;
 
     e.stopPropagation();
     e.preventDefault();
@@ -956,81 +1156,45 @@ export default function CalendarPage() {
   }, [currentWeekStart]);
 
   return (
-    <main className="container-page py-10">
+    <main className="mx-auto max-w-[1600px] px-4 py-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-indigo-600">
-            Weekly view
-          </p>
-          <h1 className="text-3xl font-semibold text-slate-900">
-            Family calendar
-          </h1>
-          <p className="text-sm text-slate-600">
-            Shared availability synced with Google Calendar.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigateWeek(-1)}
-              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50"
               aria-label="Previous week"
             >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 19l-7-7 7-7"
-                />
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <span className="min-w-[180px] text-center text-sm font-medium text-slate-700">
+            <span className="min-w-[160px] text-center text-sm font-medium text-slate-700">
               {weekLabel}
             </span>
             <button
               onClick={() => navigateWeek(1)}
-              className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+              className="cursor-pointer rounded-full border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50"
               aria-label="Next week"
             >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5l7 7-7 7"
-                />
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
+            <button
+              onClick={goToToday}
+              disabled={isCurrentWeek}
+              className="cursor-pointer rounded-full border border-slate-200 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50"
+            >
+              Today
+            </button>
           </div>
-          <button
-            onClick={goToToday}
-            disabled={isCurrentWeek}
-            className="cursor-pointer rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50"
-          >
-            Today
-          </button>
-          <button
-            onClick={() => openNewEventModal()}
-            className="cursor-pointer rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-          >
-            New event
-          </button>
         </div>
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1.8fr_0.5fr]">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_340px]" style={{ height: "calc(100vh - 120px)" }}>
+        <section className="overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           {/* Day headers */}
           <div className="grid grid-cols-[80px_repeat(7,minmax(0,1fr))] gap-2 border-b border-slate-100 pb-4">
             <div />
@@ -1110,6 +1274,25 @@ export default function CalendarPage() {
                             className="absolute inset-x-0 top-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 hover:bg-indigo-300/50"
                           />
 
+                          {/* Quick delete button — appears on hover */}
+                          <button
+                            data-delete-button="true"
+                            onMouseDown={(e) => {
+                              // Stop event from triggering drag/click-to-edit
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              setDeletePopoverEvent(event);
+                              setDeletePopoverPos({ x: rect.right + 4, y: rect.top });
+                            }}
+                            className="absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-white/80 text-slate-400 opacity-0 shadow-sm ring-1 ring-slate-200/60 transition hover:bg-red-50 hover:text-red-500 hover:ring-red-200 group-hover:opacity-100 cursor-pointer"
+                            aria-label="Delete event"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+
                           {/* Event content */}
                           <div className="p-2 pt-2">
                             <p className="truncate text-xs font-semibold text-indigo-900">
@@ -1136,6 +1319,28 @@ export default function CalendarPage() {
                         </div>
                       );
                     })}
+
+                  {/* Ghost event preview (AI proposal) */}
+                  {ghostEventPosition && ghostEventPosition.dayIndex === dayIdx && (
+                    <div
+                      className="pointer-events-none absolute left-1 right-1 animate-pulse rounded-lg border-2 border-dashed border-green-400 bg-green-100/60"
+                      style={{
+                        top: `${ghostEventPosition.top}%`,
+                        height: `${Math.max(ghostEventPosition.height, 8)}%`
+                      }}
+                    >
+                      <div className="p-2">
+                        <p className="truncate text-xs font-semibold text-green-800">
+                          {ghostEventPosition.title}
+                        </p>
+                        {ghostEventPosition.height > 12 && (
+                          <p className="truncate text-xs text-green-700">
+                            {ghostEventPosition.startTime}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Drag preview overlay */}
                   {dragPreview && dragPreview.dayIndex === dayIdx && (
@@ -1185,95 +1390,8 @@ export default function CalendarPage() {
           )}
         </section>
 
-        <aside className="space-y-6">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100">
-                <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Today
-              </h2>
-            </div>
-            <p className="mt-1 text-sm text-slate-500">
-              {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-            </p>
-            {(() => {
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const tomorrow = new Date(today);
-              tomorrow.setDate(tomorrow.getDate() + 1);
-
-              const todayEvents = events?.filter((event) => {
-                const eventDate = new Date(event.start);
-                return eventDate >= today && eventDate < tomorrow;
-              }).sort((a, b) => a.start - b.start) || [];
-
-              if (todayEvents.length === 0) {
-                return (
-                  <div className="mt-4 rounded-xl border border-dashed border-slate-200 p-4 text-center">
-                    <p className="text-sm text-slate-500">No events today</p>
-                    <button
-                      onClick={() => openNewEventModal(new Date())}
-                      className="cursor-pointer mt-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
-                    >
-                      + Add an event
-                    </button>
-                  </div>
-                );
-              }
-
-              return (
-                <ul className="mt-4 space-y-3">
-                  {todayEvents.map((event) => {
-                    const startDate = new Date(event.start);
-                    const endDate = new Date(event.end);
-                    return (
-                      <li
-                        key={event._id}
-                        onClick={() => openEditEventModal(event)}
-                        className="group cursor-pointer rounded-xl border border-slate-100 p-3 transition-colors hover:border-indigo-200 hover:bg-indigo-50/50"
-                      >
-                        <p className="font-medium text-slate-900 group-hover:text-indigo-900">
-                          {event.title}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {formatTime(startDate)} – {formatTime(endDate)}
-                        </p>
-                        {event.location && (
-                          <p className="mt-1 flex items-center gap-1 text-xs text-slate-400">
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                            {event.location}
-                          </p>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              );
-            })()}
-          </div>
-          <div className="rounded-3xl border border-indigo-100 bg-indigo-600 p-6 text-white">
-            <h2 className="text-lg font-semibold">This week</h2>
-            <p className="mt-2 text-sm text-indigo-100">
-              {events && events.length > 0
-                ? `You have ${events.length} event${events.length > 1 ? "s" : ""} scheduled.`
-                : "No events scheduled."}
-            </p>
-            <div className="mt-4">
-              <button
-                onClick={() => openNewEventModal()}
-                className="cursor-pointer rounded-full bg-white/20 px-4 py-2 text-sm font-semibold transition-colors hover:bg-white/30"
-              >
-                + New event
-              </button>
-            </div>
-          </div>
+        <aside className="min-h-0">
+          <ChatPanel onGhostEventChange={setGhostEvent} />
         </aside>
       </div>
 
@@ -1288,11 +1406,26 @@ export default function CalendarPage() {
         }}
         onSave={handleSaveEvent}
         onDelete={editingEvent ? handleDeleteEvent : undefined}
+        onDeleteFutureRecurring={editingEvent?.recurrence ? handleDeleteFutureRecurring : undefined}
         initialData={editingEvent || undefined}
         selectedDate={selectedDate}
         selectedStartTime={selectedStartTime}
         selectedEndTime={selectedEndTime}
       />
+
+      {/* Delete popover from hover × button on events */}
+      {deletePopoverEvent && deletePopoverPos && (
+        <DeletePopover
+          event={deletePopoverEvent}
+          position={deletePopoverPos}
+          onDeleteSingle={handlePopoverDeleteSingle}
+          onDeleteFuture={deletePopoverEvent.recurrence ? handlePopoverDeleteFuture : undefined}
+          onClose={() => {
+            setDeletePopoverEvent(null);
+            setDeletePopoverPos(null);
+          }}
+        />
+      )}
     </main>
   );
 }

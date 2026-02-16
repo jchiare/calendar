@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 
 const navItems = [
   { href: "/calendar", label: "Calendar" },
-  { href: "/admin", label: "Admin" },
 ];
 
 export default function Nav() {
