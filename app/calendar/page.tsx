@@ -44,9 +44,8 @@ const DRAG_THRESHOLD_PX = 5; // Minimum pixels to move before starting drag
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
-  const day = d.getDay();
-  const diff = (day + 6) % 7;
-  d.setDate(d.getDate() - diff);
+  const day = d.getDay(); // 0 = Sunday
+  d.setDate(d.getDate() - day);
   d.setHours(0, 0, 0, 0);
   return d;
 }
@@ -441,6 +440,9 @@ export default function CalendarPage() {
   const currentTimeRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
 
+  // Selected day for keyboard navigation (null = none selected)
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
+
   // Ghost event from AI chat (pending confirmation)
   const [ghostEvent, setGhostEvent] = useState<{
     title: string;
@@ -582,8 +584,7 @@ export default function CalendarPage() {
       const startDate = new Date(event.start);
       const endDate = new Date(event.end);
 
-      const dayOfWeek = startDate.getDay();
-      const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const dayIndex = startDate.getDay();
 
       const eventStartHour =
         startDate.getHours() + startDate.getMinutes() / 60;
@@ -611,8 +612,7 @@ export default function CalendarPage() {
     const startDate = new Date(ghostEvent.start);
     const endDate = new Date(ghostEvent.end);
 
-    const dayOfWeek = startDate.getDay();
-    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const dayIndex = startDate.getDay();
 
     // Check if ghost event is in the current week
     const weekEnd = new Date(currentWeekStart);
@@ -813,8 +813,7 @@ export default function CalendarPage() {
 
     const startDate = new Date(event.start);
     const endDate = new Date(event.end);
-    const dayOfWeek = startDate.getDay();
-    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const dayIndex = startDate.getDay();
 
     const info = getTimeFromMouseEvent(e);
     if (!info) return;
@@ -855,8 +854,7 @@ export default function CalendarPage() {
 
     const startDate = new Date(event.start);
     const endDate = new Date(event.end);
-    const dayOfWeek = startDate.getDay();
-    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const dayIndex = startDate.getDay();
 
     const info = getTimeFromMouseEvent(e);
     if (!info) return;
@@ -1034,17 +1032,50 @@ export default function CalendarPage() {
     resetDragState();
   }, [dragCurrent, currentWeekStart, openNewEventModal, openEditEventModal, resetDragState, updateEvent]);
 
-  // Handle escape key to cancel drag
+  // Handle keyboard navigation (arrows, escape)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isDraggingRef.current) {
         resetDragState();
+        return;
+      }
+
+      // Don't handle arrow keys when typing in inputs/textareas or modals are open
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement ||
+        modalOpen
+      ) return;
+
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setSelectedDayIndex((prev) => {
+          if (prev === null) return 0;
+          if (prev >= 6) {
+            // Move to next week
+            navigateWeek(1);
+            return 0;
+          }
+          return prev + 1;
+        });
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setSelectedDayIndex((prev) => {
+          if (prev === null) return 6;
+          if (prev <= 0) {
+            // Move to previous week
+            navigateWeek(-1);
+            return 6;
+          }
+          return prev - 1;
+        });
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [resetDragState]);
+  }, [resetDragState, modalOpen, navigateWeek]);
 
   // Handle mouse up outside the grid
   useEffect(() => {
@@ -1156,10 +1187,9 @@ export default function CalendarPage() {
   }, [currentWeekStart]);
 
   return (
-    <main className="mx-auto max-w-[1600px] px-4 py-6">
+    <main className="mx-auto max-w-[1600px] px-6 py-6 lg:px-10">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
           <div className="flex items-center gap-1">
             <button
               onClick={() => navigateWeek(-1)}
@@ -1193,7 +1223,7 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_340px]" style={{ height: "calc(100vh - 120px)" }}>
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_340px]" style={{ height: "calc(100vh - 80px)" }}>
         <section className="overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           {/* Day headers */}
           <div className="grid grid-cols-[80px_repeat(7,minmax(0,1fr))] gap-2 border-b border-slate-100 pb-4">
@@ -1201,20 +1231,23 @@ export default function CalendarPage() {
             {days.map((day) => {
               const isToday =
                 day.fullDate.toDateString() === new Date().toDateString();
+              const isWeekend = day.dayIndex === 0 || day.dayIndex === 6;
+              const isSelected = selectedDayIndex === day.dayIndex;
               return (
                 <div
                   key={day.label}
-                  className="space-y-1 text-center text-xs font-semibold"
+                  onClick={() => setSelectedDayIndex(day.dayIndex)}
+                  className={`space-y-1 rounded-lg py-1 text-center text-xs font-semibold cursor-pointer transition-colors ${isSelected ? "bg-indigo-50 ring-1 ring-indigo-200" : isWeekend ? "bg-slate-50" : "hover:bg-slate-50"}`}
                 >
                   <p
                     className={
-                      isToday ? "text-indigo-600" : "text-slate-900"
+                      isToday ? "text-indigo-600" : isWeekend ? "text-slate-400" : "text-slate-900"
                     }
                   >
                     {day.label}
                   </p>
                   <p
-                    className={`${isToday ? "rounded-full bg-indigo-600 text-white" : "text-slate-500"} mx-auto w-fit px-2 py-1`}
+                    className={`${isToday ? "rounded-full bg-indigo-600 text-white" : isWeekend ? "text-slate-400" : "text-slate-500"} mx-auto w-fit px-2 py-1`}
                   >
                     {day.date}
                   </p>
@@ -1235,12 +1268,16 @@ export default function CalendarPage() {
                   <div className="flex h-16 items-start justify-end pr-3 text-xs font-medium text-slate-400">
                     {formatTimeSlot(hour)}
                   </div>
-                  {days.map((day) => (
-                    <div
-                      key={`${day.label}-${hour}`}
-                      className={`h-16 border-t border-slate-100 hover:bg-indigo-50/50 ${isDragging ? '' : 'cursor-crosshair'}`}
-                    />
-                  ))}
+                  {days.map((day) => {
+                    const isWeekend = day.dayIndex === 0 || day.dayIndex === 6;
+                    const isSelected = selectedDayIndex === day.dayIndex;
+                    return (
+                      <div
+                        key={`${day.label}-${hour}`}
+                        className={`h-16 border-t border-slate-100 hover:bg-indigo-50/50 ${isSelected ? 'bg-indigo-50/40' : isWeekend ? 'bg-slate-50/80' : ''} ${isDragging ? '' : 'cursor-crosshair'}`}
+                      />
+                    );
+                  })}
                 </div>
               ))}
             </div>

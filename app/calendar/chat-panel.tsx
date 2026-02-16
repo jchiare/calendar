@@ -496,37 +496,17 @@ export default function ChatPanel({
     [handleSend]
   );
 
+  const hasMessages = messages.length > 0;
+
   return (
     <div className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white shadow-sm">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
-        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100">
-          <svg
-            className="h-3.5 w-3.5 text-indigo-600"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-            />
-          </svg>
-        </div>
-        <span className="text-sm font-semibold text-slate-900">
-          AI Assistant
-        </span>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3">
-        {messages.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50">
+      {hasMessages && (
+        /* Header - only show when conversation is active */
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100">
               <svg
-                className="h-5 w-5 text-indigo-400"
+                className="h-3 w-3 text-indigo-600"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -535,87 +515,105 @@ export default function ChatPanel({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={2}
-                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                  d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
                 />
               </svg>
             </div>
-            <p className="mt-3 text-sm font-medium text-slate-700">
-              Type to create an event
+            <span className="text-xs font-medium text-slate-500">
+              Chat
+            </span>
+          </div>
+          <button
+            onClick={() => { setMessages([]); onGhostEventChange(null); }}
+            className="cursor-pointer rounded-lg px-2 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Messages or empty state */}
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {!hasMessages && (
+          <div className="flex h-full flex-col justify-end pb-2">
+            <p className="text-sm font-medium text-slate-800">
+              What would you like to schedule?
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              e.g., &ldquo;coffee with George tomorrow 3&rdquo;
+              Describe an event in plain language and I&apos;ll add it to your calendar.
             </p>
+            <div className="mt-4 flex flex-col gap-1.5">
+              {SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  onClick={() => handleSend(suggestion)}
+                  className="cursor-pointer flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-slate-600 transition-colors hover:bg-indigo-50 hover:text-indigo-700"
+                >
+                  <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  {suggestion}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        <div className="space-y-3">
-          {messages.map((msg) => (
-            <div key={msg.id}>
-              {msg.role === "user" ? (
-                <div className="flex justify-end">
-                  <div className="max-w-[85%] rounded-2xl rounded-br-md bg-indigo-600 px-3 py-2 text-sm text-white">
-                    {msg.content}
-                  </div>
-                </div>
-              ) : (
-                <div className="max-w-[95%]">
-                  {msg.proposal ? (
-                    <ConfirmationCard
-                      message={msg}
-                      onConfirm={handleConfirm}
-                      onBatchConfirm={handleBatchConfirm}
-                      onTweak={handleTweak}
-                      onCancelTweak={handleCancelTweak}
-                      onSaveTweak={handleSaveTweak}
-                    />
-                  ) : (
-                    <div className="rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2 text-sm text-slate-700">
+        {hasMessages && (
+          <div className="space-y-3">
+            {messages.map((msg) => (
+              <div key={msg.id}>
+                {msg.role === "user" ? (
+                  <div className="flex justify-end">
+                    <div className="max-w-[85%] rounded-2xl rounded-br-md bg-indigo-600 px-3 py-2 text-sm text-white">
                       {msg.content}
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-
-          {isLoading && (
-            <div className="max-w-[85%]">
-              <div className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2">
-                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "0ms" }} />
-                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "150ms" }} />
-                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "300ms" }} />
+                  </div>
+                ) : (
+                  <div className="max-w-[95%]">
+                    {msg.proposal ? (
+                      <ConfirmationCard
+                        message={msg}
+                        onConfirm={handleConfirm}
+                        onBatchConfirm={handleBatchConfirm}
+                        onTweak={handleTweak}
+                        onCancelTweak={handleCancelTweak}
+                        onSaveTweak={handleSaveTweak}
+                      />
+                    ) : (
+                      <div className="rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2 text-sm text-slate-700">
+                        {msg.content}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
-          )}
-        </div>
+            ))}
+
+            {isLoading && (
+              <div className="max-w-[85%]">
+                <div className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2">
+                  <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "0ms" }} />
+                  <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "150ms" }} />
+                  <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Suggestions (show when no messages) */}
-      {messages.length === 0 && (
-        <div className="flex flex-wrap gap-1.5 border-t border-slate-100 px-4 py-2">
-          {SUGGESTIONS.map((suggestion) => (
-            <button
-              key={suggestion}
-              onClick={() => handleSend(suggestion)}
-              className="cursor-pointer rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Input */}
-      <div className="border-t border-slate-100 px-3 py-2">
+      <div className={`px-3 py-2 ${hasMessages ? 'border-t border-slate-100' : ''}`}>
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type an event..."
+            placeholder={hasMessages ? "Type a follow-up..." : "e.g. coffee with George tomorrow 3pm"}
             rows={1}
             className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
           />
