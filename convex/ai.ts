@@ -53,15 +53,11 @@ export const processMessage = action({
     try {
       const client = new OpenAI({ apiKey });
 
-      const today = new Date();
-      const todayStr = today.toLocaleDateString("en-US", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
+      const userLocalNow = getUserLocalNow(Date.now(), tzOffset);
+      const todayStr = formatUserLocalDate(userLocalNow);
+      const utcOffsetLabel = formatUtcOffsetFromTimezoneOffset(tzOffset);
 
-      const systemPrompt = `You are a smart calendar assistant. Today is ${todayStr}.
+      const systemPrompt = `You are a smart calendar assistant. User local date is ${todayStr} (${utcOffsetLabel}).
 
 When the user wants to create an event, use the create_event function. You must infer:
 
@@ -83,6 +79,7 @@ TIME INFERENCE:
 - "afternoon" → 2:00 PM
 - "evening" → 6:00 PM
 - If just a number like "3" or "at 3", infer PM for typical events
+- Relative dates ("today", "tomorrow", "next Tuesday") must be interpreted from the user's local date above, not server date.
 - "tomorrow" means the next day from today
 - "next Tuesday" means the coming Tuesday
 
@@ -218,7 +215,10 @@ Keep your responses very short and friendly. Don't be overly formal.`;
             recurringWeeks: number | null;
           };
 
-          const [year, month, day] = parsedArgs.date.split("-").map(Number);
+          const normalizedDate =
+            inferRelativeDateFromMessage(args.message, userLocalNow) ??
+            parsedArgs.date;
+          const [year, month, day] = normalizedDate.split("-").map(Number);
 
           const durationLabel =
             parsedArgs.durationMinutes >= 60
@@ -270,16 +270,19 @@ Keep your responses very short and friendly. Don't be overly formal.`;
               return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
             };
 
-            const endHour = parsedArgs.startHour + Math.floor(parsedArgs.durationMinutes / 60);
-            const endMin = parsedArgs.startMinute + (parsedArgs.durationMinutes % 60);
+            const endTotalMinutes =
+              parsedArgs.startHour * 60 +
+              parsedArgs.startMinute +
+              parsedArgs.durationMinutes;
+            const endHour = Math.floor(endTotalMinutes / 60) % 24;
+            const endMin = endTotalMinutes % 60;
 
             const recurrenceId = `recurring-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-            let msg = `Got it! I'll add ${parsedArgs.title} every ${dayRange}, ${fmtHr(parsedArgs.startHour, parsedArgs.startMinute)}–${fmtHr(endHour, endMin)} for ${weeks} weeks (${proposals.length} events).`;
+            let msg = `Adding ${parsedArgs.title} every ${dayRange}, ${fmtHr(parsedArgs.startHour, parsedArgs.startMinute)}–${fmtHr(endHour, endMin)} for ${weeks} week${weeks === 1 ? "" : "s"} (${proposals.length} events).`;
             if (parsedArgs.location) {
               msg += ` Location: ${parsedArgs.location}.`;
             }
-            msg += ` You can delete any single one later, or remove all future ones at once.`;
 
             return {
               type: "create_events",
@@ -338,6 +341,65 @@ Keep your responses very short and friendly. Don't be overly formal.`;
     }
   },
 });
+
+function getUserLocalNow(nowMs: number, timezoneOffsetMinutes: number): Date {
+  // getTimezoneOffset is UTC - local (e.g. PST = +480).
+  // Shift "now" so UTC getters represent the user's local clock.
+  return new Date(nowMs - timezoneOffsetMinutes * 60 * 1000);
+}
+
+function formatUserLocalDate(localDate: Date): string {
+  const weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][localDate.getUTCDay()];
+  const month = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ][localDate.getUTCMonth()];
+  const day = localDate.getUTCDate();
+  const year = localDate.getUTCFullYear();
+  return `${weekday}, ${month} ${day}, ${year}`;
+}
+
+function formatUtcOffsetFromTimezoneOffset(timezoneOffsetMinutes: number): string {
+  const localOffset = -timezoneOffsetMinutes; // local - UTC
+  const sign = localOffset >= 0 ? "+" : "-";
+  const abs = Math.abs(localOffset);
+  const hours = Math.floor(abs / 60);
+  const minutes = abs % 60;
+  return `UTC${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function inferRelativeDateFromMessage(
+  message: string,
+  userLocalNow: Date
+): string | null {
+  const msg = message.toLowerCase();
+  if (/\btomorrow\b/.test(msg)) {
+    const nextDay = new Date(userLocalNow);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    return formatYmdFromLocalDate(nextDay);
+  }
+  if (/\btoday\b/.test(msg) || /\btonight\b/.test(msg)) {
+    return formatYmdFromLocalDate(userLocalNow);
+  }
+  return null;
+}
+
+function formatYmdFromLocalDate(localDate: Date): string {
+  const year = localDate.getUTCFullYear();
+  const month = String(localDate.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(localDate.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 // Format timestamps into a readable message (using UTC to avoid server TZ issues)
 function formatTimestamp(startMs: number, endMs: number, durationLabel: string): string {
