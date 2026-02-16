@@ -294,10 +294,19 @@ export default function ChatPanel({
   const createEvent = useMutation(api.events.createEvent);
   const batchCreateEvents = useMutation(api.events.batchCreateEvents);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when messages/typing state changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isLoading]);
+
+  // Grow/shrink the input as the user types.
+  useEffect(() => {
+    const textarea = inputRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    const nextHeight = Math.min(textarea.scrollHeight, 160);
+    textarea.style.height = `${nextHeight}px`;
+  }, [inputValue]);
 
   // Build conversation history for multi-turn context
   const getConversationHistory = useCallback(() => {
@@ -348,6 +357,16 @@ export default function ChatPanel({
             end: response.proposal.end,
             location: response.proposal.location,
           });
+        } else if (response.proposals && response.proposals.length > 0) {
+          const preview = response.proposals[0];
+          onGhostEventChange({
+            title: preview.title,
+            start: preview.start,
+            end: preview.end,
+            location: preview.location,
+          });
+        } else {
+          onGhostEventChange(null);
         }
       } catch {
         setMessages((prev) => [
@@ -496,64 +515,38 @@ export default function ChatPanel({
     [handleSend]
   );
 
+  const handleResetChat = useCallback(() => {
+    setMessages([]);
+    setInputValue("");
+    onGhostEventChange(null);
+    inputRef.current?.focus();
+  }, [onGhostEventChange]);
+
   return (
-    <div className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white shadow-sm">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
-        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100">
-          <svg
-            className="h-3.5 w-3.5 text-indigo-600"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+    <div className="flex h-full min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm sm:rounded-3xl">
+      {messages.length > 0 && (
+        <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5 sm:px-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Conversation
+          </p>
+          <button
+            onClick={handleResetChat}
+            disabled={isLoading}
+            className="cursor-pointer rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-default disabled:opacity-40"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-            />
-          </svg>
+            New chat
+          </button>
         </div>
-        <span className="text-sm font-semibold text-slate-900">
-          AI Assistant
-        </span>
-      </div>
+      )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3">
-        {messages.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50">
-              <svg
-                className="h-5 w-5 text-indigo-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                />
-              </svg>
-            </div>
-            <p className="mt-3 text-sm font-medium text-slate-700">
-              Type to create an event
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              e.g., &ldquo;coffee with George tomorrow 3&rdquo;
-            </p>
-          </div>
-        )}
-
-        <div className="space-y-3">
+      <div className="flex-1 overflow-y-auto px-3.5 py-3 sm:px-4 sm:py-4">
+        <div className="space-y-3 pb-2">
           {messages.map((msg) => (
             <div key={msg.id}>
               {msg.role === "user" ? (
                 <div className="flex justify-end">
-                  <div className="max-w-[85%] rounded-2xl rounded-br-md bg-indigo-600 px-3 py-2 text-sm text-white">
+                  <div className="max-w-[85%] rounded-2xl rounded-br-md bg-indigo-600 px-3 py-2 text-[13px] text-white sm:text-sm">
                     {msg.content}
                   </div>
                 </div>
@@ -569,7 +562,7 @@ export default function ChatPanel({
                       onSaveTweak={handleSaveTweak}
                     />
                   ) : (
-                    <div className="rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2 text-sm text-slate-700">
+                    <div className="rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2 text-[13px] text-slate-700 sm:text-sm">
                       {msg.content}
                     </div>
                   )}
@@ -594,12 +587,13 @@ export default function ChatPanel({
 
       {/* Suggestions (show when no messages) */}
       {messages.length === 0 && (
-        <div className="flex flex-wrap gap-1.5 border-t border-slate-100 px-4 py-2">
+        <div className="flex flex-wrap gap-2 border-t border-slate-100 px-3.5 py-2.5 sm:px-4">
+          <p className="w-full text-[11px] font-semibold uppercase tracking-wide text-slate-400">Quick starts</p>
           {SUGGESTIONS.map((suggestion) => (
             <button
               key={suggestion}
               onClick={() => handleSend(suggestion)}
-              className="cursor-pointer rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+              className="cursor-pointer rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
             >
               {suggestion}
             </button>
@@ -608,21 +602,21 @@ export default function ChatPanel({
       )}
 
       {/* Input */}
-      <div className="border-t border-slate-100 px-3 py-2">
+      <div className="border-t border-slate-100 px-3 py-3 sm:py-2.5">
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type an event..."
+            placeholder={messages.length === 0 ? "Schedule anything..." : "Reply..."}
             rows={1}
-            className="flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
+            className="max-h-40 flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none sm:text-sm"
           />
           <button
             onClick={() => handleSend()}
             disabled={!inputValue.trim() || isLoading}
-            className="cursor-pointer flex-shrink-0 rounded-xl bg-indigo-600 p-2 text-white transition-colors hover:bg-indigo-700 disabled:cursor-default disabled:opacity-40"
+            className="cursor-pointer flex-shrink-0 rounded-xl bg-indigo-600 p-2.5 text-white transition-colors hover:bg-indigo-700 disabled:cursor-default disabled:opacity-40"
           >
             <svg
               className="h-4 w-4"
@@ -639,6 +633,7 @@ export default function ChatPanel({
             </svg>
           </button>
         </div>
+        <p className="mt-1.5 text-[11px] text-slate-400">Enter to send, Shift+Enter for a new line.</p>
       </div>
     </div>
   );

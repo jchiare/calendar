@@ -45,10 +45,15 @@ const DRAG_THRESHOLD_PX = 5; // Minimum pixels to move before starting drag
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
   const day = d.getDay();
-  const diff = (day + 6) % 7;
+  const diff = day;
   d.setDate(d.getDate() - diff);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+function isWeekend(date: Date): boolean {
+  const day = date.getDay();
+  return day === 0 || day === 6;
 }
 
 function formatTime(date: Date): string {
@@ -582,8 +587,7 @@ export default function CalendarPage() {
       const startDate = new Date(event.start);
       const endDate = new Date(event.end);
 
-      const dayOfWeek = startDate.getDay();
-      const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const dayIndex = startDate.getDay();
 
       const eventStartHour =
         startDate.getHours() + startDate.getMinutes() / 60;
@@ -611,8 +615,7 @@ export default function CalendarPage() {
     const startDate = new Date(ghostEvent.start);
     const endDate = new Date(ghostEvent.end);
 
-    const dayOfWeek = startDate.getDay();
-    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const dayIndex = startDate.getDay();
 
     // Check if ghost event is in the current week
     const weekEnd = new Date(currentWeekStart);
@@ -656,6 +659,31 @@ export default function CalendarPage() {
   const goToToday = useCallback(() => {
     setCurrentWeekStart(getWeekStart(new Date()));
   }, []);
+
+  useEffect(() => {
+    const handleArrowNavigation = (e: KeyboardEvent) => {
+      if (modalOpen || e.defaultPrevented) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        const isTypingTarget =
+          target.isContentEditable ||
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT";
+        if (isTypingTarget) return;
+      }
+
+      e.preventDefault();
+      navigateWeek(e.key === "ArrowLeft" ? -1 : 1);
+    };
+
+    window.addEventListener("keydown", handleArrowNavigation);
+    return () => window.removeEventListener("keydown", handleArrowNavigation);
+  }, [modalOpen, navigateWeek]);
 
   const handleSaveEvent = useCallback(
     async (formData: EventFormData) => {
@@ -813,8 +841,7 @@ export default function CalendarPage() {
 
     const startDate = new Date(event.start);
     const endDate = new Date(event.end);
-    const dayOfWeek = startDate.getDay();
-    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const dayIndex = startDate.getDay();
 
     const info = getTimeFromMouseEvent(e);
     if (!info) return;
@@ -855,8 +882,7 @@ export default function CalendarPage() {
 
     const startDate = new Date(event.start);
     const endDate = new Date(event.end);
-    const dayOfWeek = startDate.getDay();
-    const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const dayIndex = startDate.getDay();
 
     const info = getTimeFromMouseEvent(e);
     if (!info) return;
@@ -1156,59 +1182,64 @@ export default function CalendarPage() {
   }, [currentWeekStart]);
 
   return (
-    <main className="mx-auto max-w-[1600px] px-4 py-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => navigateWeek(-1)}
-              className="cursor-pointer rounded-full border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50"
-              aria-label="Previous week"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <span className="min-w-[160px] text-center text-sm font-medium text-slate-700">
-              {weekLabel}
-            </span>
-            <button
-              onClick={() => navigateWeek(1)}
-              className="cursor-pointer rounded-full border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50"
-              aria-label="Next week"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            <button
-              onClick={goToToday}
-              disabled={isCurrentWeek}
-              className="cursor-pointer rounded-full border border-slate-200 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50"
-            >
-              Today
-            </button>
-          </div>
+    <main className="mx-auto max-w-[1700px] px-4 py-5 sm:px-6 lg:px-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
+        <div className="flex w-full items-center gap-1.5 sm:w-auto sm:gap-2">
+          <button
+            onClick={() => navigateWeek(-1)}
+            className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 sm:p-1.5"
+            aria-label="Previous week"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="min-w-[170px] flex-1 text-center text-sm font-medium text-slate-700 sm:flex-none">
+            {weekLabel}
+          </span>
+          <button
+            onClick={() => navigateWeek(1)}
+            className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 sm:p-1.5"
+            aria-label="Next week"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          <button
+            onClick={goToToday}
+            disabled={isCurrentWeek}
+            className="cursor-pointer rounded-full border border-slate-200 px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-default disabled:opacity-50 sm:px-3 sm:py-1"
+          >
+            Today
+          </button>
+          <span className="hidden text-xs text-slate-400 lg:inline">Use ← / →</span>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_340px]" style={{ height: "calc(100vh - 120px)" }}>
-        <section className="overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-stretch">
+        <section className="h-[64vh] min-h-[360px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:h-[68vh] sm:p-5 lg:h-[calc(100vh-96px)]">
+          <p className="mb-2 text-xs text-slate-400 lg:hidden">Scroll sideways to see the full week.</p>
+          <div className="overflow-x-auto pb-2">
+            <div className="min-w-[920px]">
           {/* Day headers */}
           <div className="grid grid-cols-[80px_repeat(7,minmax(0,1fr))] gap-2 border-b border-slate-100 pb-4">
             <div />
             {days.map((day) => {
               const isToday =
                 day.fullDate.toDateString() === new Date().toDateString();
+              const weekend = isWeekend(day.fullDate);
               return (
                 <div
-                  key={day.label}
-                  className="space-y-1 text-center text-xs font-semibold"
+                  key={day.dayIndex}
+                  className={`space-y-1 rounded-xl py-2 text-center text-xs font-semibold ${
+                    weekend ? "bg-slate-100/80" : ""
+                  }`}
                 >
                   <p
                     className={
-                      isToday ? "text-indigo-600" : "text-slate-900"
+                      isToday ? "text-indigo-600" : weekend ? "text-slate-700" : "text-slate-900"
                     }
                   >
                     {day.label}
@@ -1235,12 +1266,17 @@ export default function CalendarPage() {
                   <div className="flex h-16 items-start justify-end pr-3 text-xs font-medium text-slate-400">
                     {formatTimeSlot(hour)}
                   </div>
-                  {days.map((day) => (
-                    <div
-                      key={`${day.label}-${hour}`}
-                      className={`h-16 border-t border-slate-100 hover:bg-indigo-50/50 ${isDragging ? '' : 'cursor-crosshair'}`}
-                    />
-                  ))}
+                  {days.map((day) => {
+                    const weekend = isWeekend(day.fullDate);
+                    return (
+                      <div
+                        key={`${day.dayIndex}-${hour}`}
+                        className={`h-16 border-t border-slate-100 ${
+                          weekend ? "bg-slate-50/90" : ""
+                        } hover:bg-indigo-50/50 ${isDragging ? '' : 'cursor-crosshair'}`}
+                      />
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -1249,7 +1285,10 @@ export default function CalendarPage() {
             <div className="pointer-events-none absolute inset-0 grid grid-cols-[80px_repeat(7,minmax(0,1fr))] gap-2">
               <div />
               {days.map((day, dayIdx) => (
-                <div key={day.label} className="relative">
+                <div
+                  key={day.dayIndex}
+                  className={`relative rounded-md ${isWeekend(day.fullDate) ? "bg-slate-50/40" : ""}`}
+                >
                   {eventPositions
                     .filter((e) => e.dayIndex === dayIdx)
                     .map((event) => {
@@ -1381,6 +1420,8 @@ export default function CalendarPage() {
               ))}
             </div>
           </div>
+            </div>
+          </div>
 
           {/* Loading state */}
           {events === undefined && (
@@ -1390,7 +1431,7 @@ export default function CalendarPage() {
           )}
         </section>
 
-        <aside className="min-h-0">
+        <aside className="h-[420px] min-h-[340px] min-w-0 sm:h-[500px] lg:h-[calc(100vh-96px)]">
           <ChatPanel onGhostEventChange={setGhostEvent} />
         </aside>
       </div>
