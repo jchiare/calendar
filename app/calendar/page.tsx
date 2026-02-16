@@ -37,10 +37,12 @@ const EXTENDED_START_HOUR = 0;
 const EXTENDED_END_HOUR = 24;
 const TIME_INCREMENT_MINUTES = 15; // 15-minute buckets
 const DRAG_THRESHOLD_PX = 5; // Minimum pixels to move before starting drag
+const SWIPE_THRESHOLD_PX = 56;
+const SWIPE_MAX_VERTICAL_DRIFT_PX = 42;
 
-// NOTE: Touch/mobile support is not yet optimized. This feature currently
-// only supports mouse interactions. Touch events for tablets/phones would
-// require additional implementation (onTouchStart, onTouchMove, onTouchEnd).
+// NOTE: Event drag interactions are currently mouse-first.
+// Mobile now supports swipe week navigation, but touch drag/create/resize
+// for events is still not implemented.
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
@@ -445,6 +447,7 @@ export default function CalendarPage() {
   const seededRef = useRef(false);
   const currentTimeRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
+  const weekSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Ghost event from AI chat (pending confirmation)
   const [ghostEvent, setGhostEvent] = useState<{
@@ -659,6 +662,31 @@ export default function CalendarPage() {
   const goToToday = useCallback(() => {
     setCurrentWeekStart(getWeekStart(new Date()));
   }, []);
+
+  const handleWeekSwipeStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (modalOpen || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    weekSwipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }, [modalOpen]);
+
+  const handleWeekSwipeEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (modalOpen || !weekSwipeStartRef.current || e.changedTouches.length !== 1) {
+      weekSwipeStartRef.current = null;
+      return;
+    }
+
+    const start = weekSwipeStartRef.current;
+    weekSwipeStartRef.current = null;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+
+    if (Math.abs(dx) < SWIPE_THRESHOLD_PX) return;
+    if (Math.abs(dy) > SWIPE_MAX_VERTICAL_DRIFT_PX) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.2) return;
+
+    navigateWeek(dx < 0 ? 1 : -1);
+  }, [modalOpen, navigateWeek]);
 
   useEffect(() => {
     const handleArrowNavigation = (e: KeyboardEvent) => {
@@ -1185,7 +1213,11 @@ export default function CalendarPage() {
     <main className="mx-auto max-w-[1700px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
-        <div className="flex w-full items-center gap-1.5 sm:w-auto sm:gap-2">
+        <div
+          className="flex w-full items-center gap-1.5 sm:w-auto sm:gap-2"
+          onTouchStart={handleWeekSwipeStart}
+          onTouchEnd={handleWeekSwipeEnd}
+        >
           <button
             onClick={() => navigateWeek(-1)}
             className="cursor-pointer rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 sm:p-1.5"
@@ -1220,7 +1252,7 @@ export default function CalendarPage() {
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-stretch">
         <section className="h-[64vh] min-h-[360px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:h-[68vh] sm:p-5 lg:h-[calc(100vh-96px)]">
-          <p className="mb-2 text-xs text-slate-400 lg:hidden">Scroll sideways to see the full week.</p>
+          <p className="mb-2 text-xs text-slate-400 lg:hidden">Swipe the date bar to change week. Scroll sideways to see the full week.</p>
           <div className="overflow-x-auto pb-2">
             <div className="min-w-[920px]">
           {/* Day headers */}
