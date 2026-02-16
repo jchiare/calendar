@@ -8,6 +8,18 @@ import ChatPanel from "./chat-panel";
 
 type EventData = Doc<"events">;
 
+type PositionedEvent = EventData & {
+  dayIndex: number;
+  top: number;
+  height: number;
+  startTime: string;
+  endTime: string;
+  startMinutes: number;
+  endMinutes: number;
+  column: number;
+  columns: number;
+};
+
 type EventFormData = {
   title: string;
   description: string;
@@ -39,6 +51,7 @@ const TIME_INCREMENT_MINUTES = 15; // 15-minute buckets
 const DRAG_THRESHOLD_PX = 5; // Minimum pixels to move before starting drag
 const SWIPE_THRESHOLD_PX = 56;
 const SWIPE_MAX_VERTICAL_DRIFT_PX = 42;
+const EVENT_COLUMN_INSET_PX = 3;
 
 // NOTE: Event drag interactions are currently mouse-first.
 // Mobile now supports swipe week navigation, but touch drag/create/resize
@@ -586,30 +599,96 @@ export default function CalendarPage() {
   const eventPositions = useMemo(() => {
     if (!events) return [];
 
-    return events.map((event) => {
-      const startDate = new Date(event.start);
-      const endDate = new Date(event.end);
+    const totalHours = endHour - startHour;
+    const positionedEvents: PositionedEvent[] = [];
 
-      const dayIndex = startDate.getDay();
+    for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+      const dayEvents = events
+        .map((event) => {
+          const startDate = new Date(event.start);
+          const endDate = new Date(event.end);
+          if (startDate.getDay() !== dayIndex) return null;
 
-      const eventStartHour =
-        startDate.getHours() + startDate.getMinutes() / 60;
-      const eventEndHour = endDate.getHours() + endDate.getMinutes() / 60;
+          const eventStartHour =
+            startDate.getHours() + startDate.getMinutes() / 60;
+          const eventEndHour = endDate.getHours() + endDate.getMinutes() / 60;
+          const startPercent =
+            ((eventStartHour - startHour) / totalHours) * 100;
+          const endPercent = ((eventEndHour - startHour) / totalHours) * 100;
+          const top = Math.max(0, startPercent);
+          const bottom = Math.min(100, endPercent);
+          const height = Math.max(0, bottom - top);
 
-      const top = ((eventStartHour - startHour) / (endHour - startHour)) * 100;
-      const height =
-        ((eventEndHour - eventStartHour) / (endHour - startHour)) * 100;
+          return {
+            ...event,
+            dayIndex,
+            top,
+            height,
+            startTime: formatTime(startDate),
+            endTime: formatTime(endDate),
+            startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
+            endMinutes: endDate.getHours() * 60 + endDate.getMinutes(),
+            column: 0,
+            columns: 1
+          } satisfies PositionedEvent;
+        })
+        .filter((event): event is PositionedEvent => event !== null)
+        .sort(
+          (a, b) =>
+            a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes
+        );
 
-      return {
-        ...event,
-        dayIndex,
-        top: Math.max(0, top),
-        height: Math.min(100 - Math.max(0, top), height),
-        startTime: formatTime(startDate),
-        endTime: formatTime(endDate)
+      const active: Array<{ endMinutes: number; column: number }> = [];
+      let overlapGroup: PositionedEvent[] = [];
+      let overlapColumns = 1;
+
+      const finalizeGroup = () => {
+        for (const event of overlapGroup) {
+          event.columns = overlapColumns;
+        }
+        overlapGroup = [];
+        overlapColumns = 1;
       };
-    });
+
+      for (const event of dayEvents) {
+        for (let i = active.length - 1; i >= 0; i--) {
+          if (active[i].endMinutes <= event.startMinutes) {
+            active.splice(i, 1);
+          }
+        }
+
+        if (active.length === 0 && overlapGroup.length > 0) {
+          finalizeGroup();
+        }
+
+        const usedColumns = new Set(active.map((item) => item.column));
+        let column = 0;
+        while (usedColumns.has(column)) {
+          column += 1;
+        }
+
+        event.column = column;
+        active.push({ endMinutes: event.endMinutes, column });
+        overlapGroup.push(event);
+        overlapColumns = Math.max(overlapColumns, active.length, column + 1);
+        positionedEvents.push(event);
+      }
+
+      if (overlapGroup.length > 0) {
+        finalizeGroup();
+      }
+    }
+
+    return positionedEvents;
   }, [events, startHour, endHour]);
+
+  const dayEventPositions = useMemo(() => {
+    const grouped: PositionedEvent[][] = Array.from({ length: 7 }, () => []);
+    for (const event of eventPositions) {
+      grouped[event.dayIndex].push(event);
+    }
+    return grouped;
+  }, [eventPositions]);
 
   // Position ghost event for the calendar overlay
   const ghostEventPosition = useMemo(() => {
@@ -1137,7 +1216,7 @@ export default function CalendarPage() {
         type: 'create' as const,
         dayIndex: dragStart.dayIndex,
         top: Math.max(0, top),
-        height: Math.max(height, 2),
+        height: Math.max(height, 0),
         startTime: hoursToTimeString(previewStartTime),
         endTime: hoursToTimeString(previewEndTime)
       };
@@ -1155,7 +1234,7 @@ export default function CalendarPage() {
         originalDayIndex: eventDragInfo.dayIndex,
         eventId: eventDragInfo.event._id,
         top: Math.max(0, top),
-        height: Math.max(height, 2),
+        height: Math.max(height, 0),
         startTime: hoursToTimeString(newStartTime),
         endTime: hoursToTimeString(newEndTime)
       };
@@ -1177,7 +1256,7 @@ export default function CalendarPage() {
         dayIndex: eventDragInfo.dayIndex,
         eventId: eventDragInfo.event._id,
         top: Math.max(0, top),
-        height: Math.max(height, 2),
+        height: Math.max(height, 0),
         startTime: hoursToTimeString(newStartTime),
         endTime: hoursToTimeString(newEndTime)
       };
@@ -1321,21 +1400,24 @@ export default function CalendarPage() {
                   key={day.dayIndex}
                   className={`relative rounded-md ${isWeekend(day.fullDate) ? "bg-slate-50/40" : ""}`}
                 >
-                  {eventPositions
-                    .filter((e) => e.dayIndex === dayIdx)
-                    .map((event) => {
+                  {dayEventPositions[dayIdx].map((event) => {
                       const isBeingDragged = isDragging && eventDragInfo?.event._id === event._id;
+                      const leftPercent = (event.column / event.columns) * 100;
+                      const rightPercent =
+                        100 - ((event.column + 1) / event.columns) * 100;
                       return (
                         <div
                           key={event._id}
                           data-event="true"
                           onMouseDown={(e) => handleEventMoveStart(e, event)}
-                          className={`group pointer-events-auto absolute left-1 right-1 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 shadow-sm transition ${
+                          className={`group pointer-events-auto absolute overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 shadow-sm transition ${
                             isBeingDragged ? 'opacity-50' : 'hover:bg-indigo-200'
                           } ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
                           style={{
                             top: `${event.top}%`,
-                            height: `${Math.max(event.height, 8)}%`
+                            height: `${event.height}%`,
+                            left: `calc(${leftPercent}% + ${EVENT_COLUMN_INSET_PX}px)`,
+                            right: `calc(${rightPercent}% + ${EVENT_COLUMN_INSET_PX}px)`
                           }}
                         >
                           {/* Top resize handle */}
@@ -1374,7 +1456,7 @@ export default function CalendarPage() {
                                 {event.startTime}
                               </p>
                             )}
-                            {event.height > 20 && event.location && (
+                            {event.height > 20 && event.columns < 3 && event.location && (
                               <p className="truncate text-xs text-indigo-600">
                                 {event.location}
                               </p>
@@ -1397,7 +1479,7 @@ export default function CalendarPage() {
                       className="pointer-events-none absolute left-1 right-1 animate-pulse rounded-lg border-2 border-dashed border-green-400 bg-green-100/60"
                       style={{
                         top: `${ghostEventPosition.top}%`,
-                        height: `${Math.max(ghostEventPosition.height, 8)}%`
+                        height: `${ghostEventPosition.height}%`
                       }}
                     >
                       <div className="p-2">
@@ -1423,7 +1505,7 @@ export default function CalendarPage() {
                       }`}
                       style={{
                         top: `${dragPreview.top}%`,
-                        height: `${Math.max(dragPreview.height, 2)}%`
+                        height: `${dragPreview.height}%`
                       }}
                     >
                       <p className="truncate p-1 text-xs font-medium text-indigo-700">
