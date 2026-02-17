@@ -600,10 +600,22 @@ export default function ChatPanel({
 
       try {
         const history = getConversationHistory();
+        // Pass household members to AI so it can assign events
+        const householdMembers = members?.map((m) => ({
+          id: m._id as string,
+          name: m.name,
+        }));
+        // Current user defaults to first member (no auth yet)
+        const currentUserName = activeMemberId
+          ? members?.find((m) => m._id === activeMemberId)?.name
+          : members?.[0]?.name;
+
         const response: AIResponse = await processMessage({
           message: messageText,
           conversationHistory: history,
           timezoneOffset: new Date().getTimezoneOffset(),
+          householdMembers,
+          currentUserName,
         });
 
         const assistantMessage: ChatMessage = {
@@ -656,13 +668,22 @@ export default function ChatPanel({
   const handleConfirm = useCallback(
     async (proposal: EventProposal) => {
       try {
+        // Use AI-assigned memberIds, falling back to active member
+        const memberIds = proposal.memberIds?.length
+          ? (proposal.memberIds as Id<"users">[])
+          : activeMemberId
+            ? [activeMemberId]
+            : members?.[0]?._id
+              ? [members[0]._id]
+              : undefined;
         await createEvent({
           title: proposal.title,
           start: proposal.start,
           end: proposal.end,
           location: proposal.location,
           description: proposal.description,
-          createdBy: activeMemberId ?? undefined,
+          createdBy: activeMemberId ?? members?.[0]?._id ?? undefined,
+          memberIds,
         });
 
         // Update the message status to confirmed
@@ -685,7 +706,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [createEvent, onGhostEventChange, activeMemberId]
+    [createEvent, onGhostEventChange, activeMemberId, members]
   );
 
   const handleBatchConfirm = useCallback(
@@ -695,6 +716,15 @@ export default function ChatPanel({
       recurrenceId?: string
     ) => {
       try {
+        // Use AI-assigned memberIds from the first proposal (all proposals in a batch share the same assignment)
+        const firstProposal = proposals[0];
+        const memberIds = firstProposal?.memberIds?.length
+          ? (firstProposal.memberIds as Id<"users">[])
+          : activeMemberId
+            ? [activeMemberId]
+            : members?.[0]?._id
+              ? [members[0]._id]
+              : undefined;
         await batchCreateEvents({
           events: proposals.map((p) => ({
             title: p.title,
@@ -704,7 +734,8 @@ export default function ChatPanel({
             description: p.description,
           })),
           recurrenceId,
-          createdBy: activeMemberId ?? undefined,
+          createdBy: activeMemberId ?? members?.[0]?._id ?? undefined,
+          memberIds,
         });
 
         // Update the message status to confirmed
@@ -732,7 +763,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [batchCreateEvents, onGhostEventChange, activeMemberId]
+    [batchCreateEvents, onGhostEventChange, activeMemberId, members]
   );
 
   const handleTweak = useCallback((messageId: string) => {
@@ -754,13 +785,21 @@ export default function ChatPanel({
   const handleSaveTweak = useCallback(
     async (messageId: string, updatedProposal: EventProposal) => {
       try {
+        const memberIds = updatedProposal.memberIds?.length
+          ? (updatedProposal.memberIds as Id<"users">[])
+          : activeMemberId
+            ? [activeMemberId]
+            : members?.[0]?._id
+              ? [members[0]._id]
+              : undefined;
         await createEvent({
           title: updatedProposal.title,
           start: updatedProposal.start,
           end: updatedProposal.end,
           location: updatedProposal.location,
           description: updatedProposal.description,
-          createdBy: activeMemberId ?? undefined,
+          createdBy: activeMemberId ?? members?.[0]?._id ?? undefined,
+          memberIds,
         });
 
         setMessages((prev) =>
@@ -783,7 +822,7 @@ export default function ChatPanel({
         ]);
       }
     },
-    [createEvent, onGhostEventChange, activeMemberId]
+    [createEvent, onGhostEventChange, activeMemberId, members]
   );
 
   const handleKeyDown = useCallback(

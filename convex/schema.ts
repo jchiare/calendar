@@ -58,6 +58,7 @@ export default defineSchema({
       )
     ),
     createdBy: v.optional(v.id("users")),
+    memberIds: v.optional(v.array(v.id("users"))),
     recurrence: v.optional(v.string()),
     metadata: v.optional(v.any()),
     updatedAt: v.number(),

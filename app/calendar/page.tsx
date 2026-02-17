@@ -9,6 +9,7 @@ import ChatPanel from "./chat-panel";
 type EventData = Doc<"events"> & {
   creatorColor: string | null;
   creatorName: string | null;
+  memberInfos: { id: string; name: string; color: string }[];
 };
 
 type PositionedEvent = EventData & {
@@ -861,11 +862,16 @@ export default function CalendarPage() {
     return { startHour: minHour, endHour: maxHour, timeSlots: slots };
   }, [events, currentTime]);
 
-  // Filter events by active member
+  // Filter events by active member (check memberIds first, fall back to createdBy)
   const filteredEvents = useMemo(() => {
     if (!events) return undefined;
     if (!activeMemberId) return events;
-    return events.filter((e) => e.createdBy === activeMemberId);
+    return events.filter((e) => {
+      if (e.memberIds && e.memberIds.length > 0) {
+        return e.memberIds.includes(activeMemberId);
+      }
+      return e.createdBy === activeMemberId;
+    });
   }, [events, activeMemberId]);
 
   // Position events in the grid
@@ -1094,13 +1100,16 @@ export default function CalendarPage() {
           location: formData.location || undefined
         });
       } else {
+        // For manually created events, assign to active member or first household member
+        const memberId = activeMemberId ?? household?.members?.[0]?._id;
         await createEvent({
           title: formData.title,
           description: formData.description || undefined,
           start: startDate.getTime(),
           end: endDate.getTime(),
           location: formData.location || undefined,
-          createdBy: activeMemberId ?? undefined,
+          createdBy: memberId ?? undefined,
+          memberIds: memberId ? [memberId as Id<"users">] : undefined,
         });
       }
 
@@ -1108,7 +1117,7 @@ export default function CalendarPage() {
       setEditingEvent(null);
       setSelectedDate(undefined);
     },
-    [editingEvent, createEvent, updateEvent, activeMemberId]
+    [editingEvent, createEvent, updateEvent, activeMemberId, household]
   );
 
   const handleDeleteEvent = useCallback(async () => {
@@ -1774,6 +1783,18 @@ export default function CalendarPage() {
                               <p className={`truncate text-xs ${event.colorScheme.textSub}`}>
                                 {event.location}
                               </p>
+                            )}
+                            {/* Member dots for multi-member events */}
+                            {event.memberInfos.length > 1 && event.height > 14 && (
+                              <div className="mt-0.5 flex items-center gap-0.5">
+                                {event.memberInfos.map((mi) => (
+                                  <span
+                                    key={mi.id}
+                                    title={mi.name}
+                                    className={`inline-block h-2 w-2 rounded-full ${MEMBER_DOT[mi.color] ?? "bg-slate-400"}`}
+                                  />
+                                ))}
+                              </div>
                             )}
                           </div>
 
