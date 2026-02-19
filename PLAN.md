@@ -1,7 +1,25 @@
 # Calendar Web App Plan (AI-Assisted, Chat-Driven)
 
-## Vision
-A full-featured calendar app with a smart AI side panel. The calendar is the main event — big, visual, familiar. But instead of clicking through forms to create events, you type naturally into a compact chat panel on the right. The AI figures out everything: timing, duration, who's involved, where it is. You glance at a small inline confirmation card and tap "Add" — done.
+## Product Vision
+
+An AI-first household command center. Not just a calendar — a proactive system that understands your family's life and acts on it.
+
+Today it schedules. Tomorrow it thinks ahead:
+- Sees the fridge is running low and adds a grocery run before the weekend.
+- Notices you're late for pickup and there's more traffic than usual — texts your partner to cover.
+- Spots a free week in March and flags that flights to Europe are cheaper than they've been in months.
+- Knows the dentist appointments are overdue and proposes slots that work for everyone.
+
+The calendar is the foundation — the shared surface where a household's chaos becomes visible. The AI is the brain on top: scheduling, nudging, optimizing, and eventually doing things on your behalf.
+
+### How it works today
+A full-featured calendar with a smart AI side panel. The calendar is big, visual, familiar. But instead of clicking through forms to create events, you type naturally into a compact chat panel. The AI figures out everything: timing, duration, who's involved, where it is. You glance at a small inline confirmation card and tap "Add" — done.
+
+### Where it's going
+- **Multi-person households**: Everyone in the house sees the same calendar, color-coded by person. Onboard your family in 30 seconds.
+- **Proactive intelligence**: The AI doesn't wait to be asked. It monitors, suggests, and eventually acts — grocery runs, appointment reminders, travel deals, schedule conflicts.
+- **External integrations**: Google Calendar sync, smart home devices, grocery delivery APIs, flight price trackers, traffic data.
+- **Ambient awareness**: Understands routines, preferences, and patterns. Gets smarter the longer you use it.
 
 ## Layout
 
