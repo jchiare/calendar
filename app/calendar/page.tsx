@@ -58,6 +58,12 @@ const SWIPE_THRESHOLD_PX = 56;
 const SWIPE_MAX_VERTICAL_DRIFT_PX = 42;
 const EVENT_COLUMN_INSET_PX = 3;
 
+// Stacked-with-offset overlap layout (Google Calendar style)
+const OVERLAP_STEP_PCT = 15;          // each overlapping column shifts right by 15%
+const OVERLAP_BASE_WIDTH_PCT = 85;    // first event takes 85% width
+const OVERLAP_MIN_WIDTH_PCT = 40;     // never narrower than 40%
+const OVERLAP_RIGHT_MARGIN_PX = 4;    // small right-edge gap
+
 // Member color palette for event rendering
 const MEMBER_COLOR_MAP: Record<string, { bg: string; border: string; text: string; textSub: string; hoverBg: string }> = {
   indigo: { bg: "bg-indigo-100", border: "border-indigo-200", text: "text-indigo-900", textSub: "text-indigo-700", hoverBg: "hover:bg-indigo-200" },
@@ -1725,22 +1731,27 @@ export default function CalendarPage() {
                 >
                   {dayEventPositions[dayIdx].map((event) => {
                       const isBeingDragged = isDragging && eventDragInfo?.event._id === event._id;
-                      const leftPercent = (event.column / event.columns) * 100;
-                      const rightPercent =
-                        100 - ((event.column + 1) / event.columns) * 100;
+                      const leftPercent = Math.min(event.column * OVERLAP_STEP_PCT, 100 - OVERLAP_MIN_WIDTH_PCT);
+                      const isLastColumn = event.column === event.columns - 1;
+                      const widthPercent = isLastColumn
+                        ? 100 - leftPercent
+                        : Math.max(OVERLAP_BASE_WIDTH_PCT - event.column * 5, OVERLAP_MIN_WIDTH_PCT);
+                      const rightPercent = Math.max(0, 100 - leftPercent - widthPercent);
                       return (
                         <div
                           key={event._id}
                           data-event="true"
                           onMouseDown={(e) => handleEventMoveStart(e, event)}
-                          className={`group pointer-events-auto absolute overflow-hidden rounded-lg border ${event.colorScheme.border} ${event.colorScheme.bg} shadow-sm transition ${
+                          className={`group pointer-events-auto absolute overflow-hidden rounded-lg border ${event.colorScheme.border} ${event.colorScheme.bg} ${event.column === 0 ? 'shadow-sm' : ''} transition ${
                             isBeingDragged ? 'opacity-50' : event.colorScheme.hoverBg
                           } ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
                           style={{
                             top: `${event.top}%`,
                             height: `${event.height}%`,
                             left: `calc(${leftPercent}% + ${EVENT_COLUMN_INSET_PX}px)`,
-                            right: `calc(${rightPercent}% + ${EVENT_COLUMN_INSET_PX}px)`
+                            right: `calc(${rightPercent}% + ${OVERLAP_RIGHT_MARGIN_PX}px)`,
+                            zIndex: event.column + 1,
+                            boxShadow: event.column > 0 ? '-2px 0 4px rgba(0,0,0,0.12)' : undefined,
                           }}
                         >
                           {/* Top resize handle */}
@@ -1779,7 +1790,7 @@ export default function CalendarPage() {
                                 {event.startTime}
                               </p>
                             )}
-                            {event.height > 20 && event.columns < 3 && event.location && (
+                            {event.height > 20 && event.columns < 5 && event.location && (
                               <p className={`truncate text-xs ${event.colorScheme.textSub}`}>
                                 {event.location}
                               </p>

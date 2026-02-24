@@ -662,7 +662,7 @@ export default function ChatPanel({
         inputRef.current?.focus();
       }
     },
-    [inputValue, isLoading, processMessage, getConversationHistory, onGhostEventChange]
+    [inputValue, isLoading, processMessage, getConversationHistory, onGhostEventChange, activeMemberId, members]
   );
 
   const handleConfirm = useCallback(

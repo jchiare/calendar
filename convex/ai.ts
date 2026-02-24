@@ -78,7 +78,7 @@ The person typing is${args.currentUserName ? ` ${args.currentUserName}` : " the 
 MEMBER ASSIGNMENT (assignedMembers field):
 - Always return assignedMembers as an array of household member names that this event involves.
 - If the message mentions a household member by name (e.g., "${memberNames[0] ?? "Jamie"}'s dentist"), assign to that member: ["${memberNames[0] ?? "Jamie"}"].
-- If the message says "coffee with ${memberNames[1] ?? "someone"}" and ${memberNames[1] ?? "someone"} IS a household member, assign to BOTH the current user and that member: ["${args.currentUserName ?? memberNames[0] ?? "User"}", "${memberNames[1] ?? "someone"}"].
+- If the message says "coffee with ${memberNames[1] ?? "someone"}" and ${memberNames[1] ?? "someone"} IS a household member, assign ONLY to that named member: ["${memberNames[1] ?? "someone"}"]. The word "with" indicates whose event it is, not that multiple people are attending.
 - If the message mentions a name that is NOT a household member (e.g., "coffee with George" where George is not in the household), that person is an external attendee. Assign only to the current user: ["${args.currentUserName ?? memberNames[0] ?? "User"}"]. Put the external person in the attendees field.
 - If the event seems like it's for the whole family (e.g., "family dinner", "movie night"), assign to ALL household members: [${memberNames.map((n) => `"${n}"`).join(", ")}].
 - For ambiguous events with no specific person mentioned (e.g., "dentist 2pm", "workout"), assign to the current user: ["${args.currentUserName ?? memberNames[0] ?? "User"}"].
