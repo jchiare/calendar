@@ -12,6 +12,7 @@ export type EventProposal = {
   location?: string;
   attendees?: string[];
   description?: string;
+  memberIds?: string[];
 };
 
 export type AIResponse = {
@@ -36,11 +37,24 @@ export const processMessage = action({
       )
     ),
     timezoneOffset: v.optional(v.number()),
+    householdMembers: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          name: v.string(),
+        })
+      )
+    ),
+    currentUserName: v.optional(v.string()),
   },
   handler: async (_ctx, args): Promise<AIResponse> => {
     // timezoneOffset: minutes from UTC (e.g. 480 for PST).
     // Server runs in UTC, so we adjust timestamps to match the user's local time.
     const tzOffset = args.timezoneOffset ?? 0;
+    const memberNames = (args.householdMembers ?? []).map((m) => m.name);
+    const memberNameToId = new Map(
+      (args.householdMembers ?? []).map((m) => [m.name.toLowerCase(), m.id])
+    );
     const apiKey = process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
@@ -57,8 +71,22 @@ export const processMessage = action({
       const todayStr = formatUserLocalDate(userLocalNow);
       const utcOffsetLabel = formatUtcOffsetFromTimezoneOffset(tzOffset);
 
-      const systemPrompt = `You are a smart calendar assistant. User local date is ${todayStr} (${utcOffsetLabel}).
+      const householdSection = memberNames.length > 0
+        ? `\nHOUSEHOLD MEMBERS: ${memberNames.join(", ")}
+The person typing is${args.currentUserName ? ` ${args.currentUserName}` : " the first member"}.
 
+MEMBER ASSIGNMENT (assignedMembers field):
+- Always return assignedMembers as an array of household member names that this event involves.
+- If the message mentions a household member by name (e.g., "${memberNames[0] ?? "Jamie"}'s dentist"), assign to that member: ["${memberNames[0] ?? "Jamie"}"].
+- If the message says "coffee with ${memberNames[1] ?? "someone"}" and ${memberNames[1] ?? "someone"} IS a household member, assign to BOTH the current user and that member: ["${args.currentUserName ?? memberNames[0] ?? "User"}", "${memberNames[1] ?? "someone"}"].
+- If the message mentions a name that is NOT a household member (e.g., "coffee with George" where George is not in the household), that person is an external attendee. Assign only to the current user: ["${args.currentUserName ?? memberNames[0] ?? "User"}"]. Put the external person in the attendees field.
+- If the event seems like it's for the whole family (e.g., "family dinner", "movie night"), assign to ALL household members: [${memberNames.map((n) => `"${n}"`).join(", ")}].
+- For ambiguous events with no specific person mentioned (e.g., "dentist 2pm", "workout"), assign to the current user: ["${args.currentUserName ?? memberNames[0] ?? "User"}"].
+- IMPORTANT: Only use exact household member names from the list above. Never invent member names.\n`
+        : "";
+
+      const systemPrompt = `You are a smart calendar assistant for a household. User local date is ${todayStr} (${utcOffsetLabel}).
+${householdSection}
 When the user wants to create an event, use the create_event function. You must infer:
 
 DURATION RULES (apply these based on event type keywords):
@@ -172,6 +200,12 @@ Keep your responses very short and friendly. Don't be overly formal.`;
                 description:
                   "For recurring events: number of weeks to repeat. Default 8. null for single events.",
               },
+              assignedMembers: {
+                type: ["array", "null"],
+                items: { type: "string" },
+                description:
+                  "Household member names this event is for. Use exact names from the household list. null if no household members are known.",
+              },
             },
             required: [
               "title",
@@ -184,6 +218,7 @@ Keep your responses very short and friendly. Don't be overly formal.`;
               "description",
               "recurringDays",
               "recurringWeeks",
+              "assignedMembers",
             ],
             additionalProperties: false,
           },
@@ -213,7 +248,25 @@ Keep your responses very short and friendly. Don't be overly formal.`;
             description: string | null;
             recurringDays: number[] | null;
             recurringWeeks: number | null;
+            assignedMembers: string[] | null;
           };
+
+          // Map assigned member names → IDs
+          const resolvedMemberIds: string[] = [];
+          if (parsedArgs.assignedMembers) {
+            for (const name of parsedArgs.assignedMembers) {
+              const id = memberNameToId.get(name.toLowerCase());
+              if (id) resolvedMemberIds.push(id);
+            }
+          }
+          // Fallback: if AI didn't assign anyone but we have members, assign to current user
+          if (resolvedMemberIds.length === 0 && args.householdMembers && args.householdMembers.length > 0) {
+            const currentName = args.currentUserName?.toLowerCase();
+            const fallbackId = currentName
+              ? memberNameToId.get(currentName) ?? args.householdMembers[0].id
+              : args.householdMembers[0].id;
+            resolvedMemberIds.push(fallbackId);
+          }
 
           const normalizedDate =
             inferRelativeDateFromMessage(args.message, userLocalNow) ??
@@ -251,6 +304,7 @@ Keep your responses very short and friendly. Don't be overly formal.`;
                   location: parsedArgs.location ?? undefined,
                   attendees: parsedArgs.attendees ?? undefined,
                   description: parsedArgs.description ?? undefined,
+                  memberIds: resolvedMemberIds.length > 0 ? resolvedMemberIds : undefined,
                 });
               }
             }
@@ -305,6 +359,7 @@ Keep your responses very short and friendly. Don't be overly formal.`;
             location: parsedArgs.location ?? undefined,
             attendees: parsedArgs.attendees ?? undefined,
             description: parsedArgs.description ?? undefined,
+            memberIds: resolvedMemberIds.length > 0 ? resolvedMemberIds : undefined,
           };
 
           let message = formatTimestamp(startMs, endMs, durationLabel);
