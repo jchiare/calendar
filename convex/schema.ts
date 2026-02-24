@@ -6,6 +6,8 @@ export default defineSchema({
     name: v.string(),
     email: v.string(),
     timezone: v.string(),
+    color: v.optional(v.string()),
+    avatarEmoji: v.optional(v.string()),
     preferences: v.optional(
       v.object({
         weekStart: v.optional(v.string()),
@@ -40,6 +42,7 @@ export default defineSchema({
     .index("by_workspace", ["workspaceId"])
     .index("by_provider_external", ["provider", "externalId"]),
   events: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     calendarId: v.id("calendars"),
     title: v.string(),
     description: v.optional(v.string()),
@@ -55,6 +58,8 @@ export default defineSchema({
         })
       )
     ),
+    createdBy: v.optional(v.id("users")),
+    memberIds: v.optional(v.array(v.id("users"))),
     recurrence: v.optional(v.string()),
     metadata: v.optional(v.any()),
     updatedAt: v.number(),

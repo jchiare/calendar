@@ -3,10 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import ChatPanel from "./chat-panel";
 
-type EventData = Doc<"events">;
+type EventData = Doc<"events"> & {
+  creatorColor: string | null;
+  creatorName: string | null;
+  memberInfos: { id: string; name: string; color: string }[];
+};
 
 type PositionedEvent = EventData & {
   dayIndex: number;
@@ -18,6 +22,7 @@ type PositionedEvent = EventData & {
   endMinutes: number;
   column: number;
   columns: number;
+  colorScheme: { bg: string; border: string; text: string; textSub: string; hoverBg: string };
 };
 
 type EventFormData = {
@@ -52,6 +57,263 @@ const DRAG_THRESHOLD_PX = 5; // Minimum pixels to move before starting drag
 const SWIPE_THRESHOLD_PX = 56;
 const SWIPE_MAX_VERTICAL_DRIFT_PX = 42;
 const EVENT_COLUMN_INSET_PX = 3;
+
+// Member color palette for event rendering
+const MEMBER_COLOR_MAP: Record<string, { bg: string; border: string; text: string; textSub: string; hoverBg: string }> = {
+  indigo: { bg: "bg-indigo-100", border: "border-indigo-200", text: "text-indigo-900", textSub: "text-indigo-700", hoverBg: "hover:bg-indigo-200" },
+  rose: { bg: "bg-rose-100", border: "border-rose-200", text: "text-rose-900", textSub: "text-rose-700", hoverBg: "hover:bg-rose-200" },
+  amber: { bg: "bg-amber-100", border: "border-amber-200", text: "text-amber-900", textSub: "text-amber-700", hoverBg: "hover:bg-amber-200" },
+  emerald: { bg: "bg-emerald-100", border: "border-emerald-200", text: "text-emerald-900", textSub: "text-emerald-700", hoverBg: "hover:bg-emerald-200" },
+  cyan: { bg: "bg-cyan-100", border: "border-cyan-200", text: "text-cyan-900", textSub: "text-cyan-700", hoverBg: "hover:bg-cyan-200" },
+  purple: { bg: "bg-purple-100", border: "border-purple-200", text: "text-purple-900", textSub: "text-purple-700", hoverBg: "hover:bg-purple-200" },
+  orange: { bg: "bg-orange-100", border: "border-orange-200", text: "text-orange-900", textSub: "text-orange-700", hoverBg: "hover:bg-orange-200" },
+  teal: { bg: "bg-teal-100", border: "border-teal-200", text: "text-teal-900", textSub: "text-teal-700", hoverBg: "hover:bg-teal-200" },
+};
+const DEFAULT_EVENT_COLORS = MEMBER_COLOR_MAP.indigo;
+
+function getEventColors(color?: string | null) {
+  if (!color) return DEFAULT_EVENT_COLORS;
+  return MEMBER_COLOR_MAP[color] ?? DEFAULT_EVENT_COLORS;
+}
+
+type HouseholdMember = {
+  _id: Id<"users">;
+  name: string;
+  color: string;
+  avatarEmoji?: string;
+  role: string;
+};
+
+type HouseholdData = {
+  _id: Id<"workspaces">;
+  name: string;
+  members: HouseholdMember[];
+};
+
+const MEMBER_DOT: Record<string, string> = {
+  indigo: "bg-indigo-500",
+  rose: "bg-rose-500",
+  amber: "bg-amber-500",
+  emerald: "bg-emerald-500",
+  cyan: "bg-cyan-500",
+  purple: "bg-purple-500",
+  orange: "bg-orange-500",
+  teal: "bg-teal-500",
+};
+
+const MEMBER_COLOR_OPTIONS = [
+  { name: "indigo", bg: "bg-indigo-500", ring: "ring-indigo-300" },
+  { name: "rose", bg: "bg-rose-500", ring: "ring-rose-300" },
+  { name: "amber", bg: "bg-amber-500", ring: "ring-amber-300" },
+  { name: "emerald", bg: "bg-emerald-500", ring: "ring-emerald-300" },
+  { name: "cyan", bg: "bg-cyan-500", ring: "ring-cyan-300" },
+  { name: "purple", bg: "bg-purple-500", ring: "ring-purple-300" },
+  { name: "orange", bg: "bg-orange-500", ring: "ring-orange-300" },
+  { name: "teal", bg: "bg-teal-500", ring: "ring-teal-300" },
+];
+
+function HouseholdPopover({
+  household,
+  onClose,
+}: {
+  household: HouseholdData;
+  onClose: () => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const addMember = useMutation(api.household.addMember);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(() => {
+    const usedColors = new Set(household.members.map((m) => m.color));
+    return MEMBER_COLOR_OPTIONS.find((c) => !usedColors.has(c.name))?.name ?? "indigo";
+  });
+  const [isAdding, setIsAdding] = useState(false);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    setIsAdding(true);
+    try {
+      await addMember({ name: newName.trim(), color: newColor });
+      setNewName("");
+      setShowAddForm(false);
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  return (
+    <div
+      ref={popoverRef}
+      className="absolute left-0 top-full z-50 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+    >
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-900">
+          {household.name}
+        </p>
+        <button
+          onClick={onClose}
+          className="cursor-pointer rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="mt-3 border-t border-slate-100 pt-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          Members
+        </p>
+        <ul className="mt-2 space-y-1">
+          {household.members.map((member) => (
+            <li
+              key={member._id}
+              className="flex items-center gap-2.5 rounded-lg px-2 py-1.5"
+            >
+              <span
+                className={`inline-block h-3 w-3 flex-shrink-0 rounded-full ${
+                  MEMBER_DOT[member.color] ?? "bg-slate-400"
+                }`}
+              />
+              <span className="flex-1 text-sm text-slate-800">
+                {member.avatarEmoji && (
+                  <span className="mr-1">{member.avatarEmoji}</span>
+                )}
+                {member.name}
+              </span>
+              <span className="text-[10px] text-slate-400">
+                {member.role}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        {/* Add member */}
+        {!showAddForm ? (
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="mt-2 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add member
+          </button>
+        ) : (
+          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Name"
+              autoFocus
+              className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAdd();
+                if (e.key === "Escape") setShowAddForm(false);
+              }}
+            />
+            <div className="mt-2 flex gap-1">
+              {MEMBER_COLOR_OPTIONS.map((c) => (
+                <button
+                  key={c.name}
+                  onClick={() => setNewColor(c.name)}
+                  className={`h-5 w-5 cursor-pointer rounded-full ${c.bg} transition-all ${
+                    newColor === c.name
+                      ? `ring-2 ${c.ring} ring-offset-1`
+                      : "opacity-40 hover:opacity-70"
+                  }`}
+                  aria-label={c.name}
+                />
+              ))}
+            </div>
+            <div className="mt-2 flex justify-end gap-1.5">
+              <button
+                onClick={() => setShowAddForm(false)}
+                className="cursor-pointer rounded-md px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAdd}
+                disabled={!newName.trim() || isAdding}
+                className="cursor-pointer rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+              >
+                {isAdding ? "Adding..." : "Add"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MemberBar({
+  members,
+  activeMemberId,
+  onSelectMember,
+}: {
+  members: HouseholdMember[];
+  activeMemberId: Id<"users"> | null;
+  onSelectMember: (id: Id<"users"> | null) => void;
+}) {
+  if (members.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-1">
+      {/* "All" button */}
+      <button
+        onClick={() => onSelectMember(null)}
+        className={`cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+          activeMemberId === null
+            ? "bg-slate-900 text-white"
+            : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+        }`}
+      >
+        All
+      </button>
+      {members.map((member) => (
+        <button
+          key={member._id}
+          onClick={() =>
+            onSelectMember(activeMemberId === member._id ? null : member._id)
+          }
+          className={`flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+            activeMemberId === member._id
+              ? "bg-slate-900 text-white"
+              : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+          }`}
+          title={member.name}
+        >
+          <span
+            className={`inline-block h-2.5 w-2.5 rounded-full ${
+              MEMBER_DOT[member.color] ?? "bg-slate-400"
+            } ${activeMemberId === member._id ? "ring-1 ring-white" : ""}`}
+          />
+          <span className="max-w-[80px] truncate">{member.name}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // NOTE: Event drag interactions are currently mouse-first.
 // Mobile now supports swipe week navigation, but touch drag/create/resize
@@ -462,6 +724,11 @@ export default function CalendarPage() {
   const hasScrolledRef = useRef(false);
   const weekSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
+  // Household / multi-user state
+  const household = useQuery(api.household.getHousehold);
+  const [activeMemberId, setActiveMemberId] = useState<Id<"users"> | null>(null);
+  const [householdPopoverOpen, setHouseholdPopoverOpen] = useState(false);
+
   // Ghost event from AI chat (pending confirmation)
   const [ghostEvent, setGhostEvent] = useState<{
     title: string;
@@ -595,15 +862,27 @@ export default function CalendarPage() {
     return { startHour: minHour, endHour: maxHour, timeSlots: slots };
   }, [events, currentTime]);
 
+  // Filter events by active member (check memberIds first, fall back to createdBy)
+  const filteredEvents = useMemo(() => {
+    if (!events) return undefined;
+    if (!activeMemberId) return events;
+    return events.filter((e) => {
+      if (e.memberIds && e.memberIds.length > 0) {
+        return e.memberIds.includes(activeMemberId);
+      }
+      return e.createdBy === activeMemberId;
+    });
+  }, [events, activeMemberId]);
+
   // Position events in the grid
   const eventPositions = useMemo(() => {
-    if (!events) return [];
+    if (!filteredEvents) return [];
 
     const totalHours = endHour - startHour;
     const positionedEvents: PositionedEvent[] = [];
 
     for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
-      const dayEvents = events
+      const dayEvents = filteredEvents
         .map((event) => {
           const startDate = new Date(event.start);
           const endDate = new Date(event.end);
@@ -621,6 +900,8 @@ export default function CalendarPage() {
 
           return {
             ...event,
+            creatorColor: event.creatorColor ?? null,
+            creatorName: event.creatorName ?? null,
             dayIndex,
             top,
             height,
@@ -629,8 +910,9 @@ export default function CalendarPage() {
             startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
             endMinutes: endDate.getHours() * 60 + endDate.getMinutes(),
             column: 0,
-            columns: 1
-          } satisfies PositionedEvent;
+            columns: 1,
+            colorScheme: getEventColors(event.creatorColor),
+          } as PositionedEvent;
         })
         .filter((event): event is PositionedEvent => event !== null)
         .sort(
@@ -680,7 +962,7 @@ export default function CalendarPage() {
     }
 
     return positionedEvents;
-  }, [events, startHour, endHour]);
+  }, [filteredEvents, startHour, endHour]);
 
   const dayEventPositions = useMemo(() => {
     const grouped: PositionedEvent[][] = Array.from({ length: 7 }, () => []);
@@ -818,12 +1100,16 @@ export default function CalendarPage() {
           location: formData.location || undefined
         });
       } else {
+        // For manually created events, assign to active member or first household member
+        const memberId = activeMemberId ?? household?.members?.[0]?._id;
         await createEvent({
           title: formData.title,
           description: formData.description || undefined,
           start: startDate.getTime(),
           end: endDate.getTime(),
-          location: formData.location || undefined
+          location: formData.location || undefined,
+          createdBy: memberId ?? undefined,
+          memberIds: memberId ? [memberId as Id<"users">] : undefined,
         });
       }
 
@@ -831,7 +1117,7 @@ export default function CalendarPage() {
       setEditingEvent(null);
       setSelectedDate(undefined);
     },
-    [editingEvent, createEvent, updateEvent]
+    [editingEvent, createEvent, updateEvent, activeMemberId, household]
   );
 
   const handleDeleteEvent = useCallback(async () => {
@@ -1291,7 +1577,44 @@ export default function CalendarPage() {
   return (
     <main className="mx-auto max-w-[1700px] px-4 py-5 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-slate-900">Calendar</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold text-slate-900">
+            {household?.name ?? "Calendar"}
+          </h1>
+          {household && (
+            <div className="relative">
+              <button
+                onClick={() => setHouseholdPopoverOpen((prev) => !prev)}
+                className={`cursor-pointer rounded-full border p-1.5 transition-colors ${
+                  householdPopoverOpen
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-600"
+                    : "border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700"
+                }`}
+                aria-label="Manage household"
+                title="Manage household"
+              >
+                {/* People icon */}
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </button>
+              {householdPopoverOpen && (
+                <HouseholdPopover
+                  household={household as HouseholdData}
+                  onClose={() => setHouseholdPopoverOpen(false)}
+                />
+              )}
+            </div>
+          )}
+          <div className="mx-1 h-5 w-px bg-slate-200" />
+          {household && household.members.length > 0 && (
+            <MemberBar
+              members={household.members as HouseholdMember[]}
+              activeMemberId={activeMemberId}
+              onSelectMember={setActiveMemberId}
+            />
+          )}
+        </div>
         <div
           className="flex w-full items-center gap-1.5 sm:w-auto sm:gap-2"
           onTouchStart={handleWeekSwipeStart}
@@ -1410,8 +1733,8 @@ export default function CalendarPage() {
                           key={event._id}
                           data-event="true"
                           onMouseDown={(e) => handleEventMoveStart(e, event)}
-                          className={`group pointer-events-auto absolute overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100 shadow-sm transition ${
-                            isBeingDragged ? 'opacity-50' : 'hover:bg-indigo-200'
+                          className={`group pointer-events-auto absolute overflow-hidden rounded-lg border ${event.colorScheme.border} ${event.colorScheme.bg} shadow-sm transition ${
+                            isBeingDragged ? 'opacity-50' : event.colorScheme.hoverBg
                           } ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
                           style={{
                             top: `${event.top}%`,
@@ -1448,18 +1771,30 @@ export default function CalendarPage() {
 
                           {/* Event content */}
                           <div className="p-2 pt-2">
-                            <p className="truncate text-xs font-semibold text-indigo-900">
+                            <p className={`truncate text-xs font-semibold ${event.colorScheme.text}`}>
                               {event.title}
                             </p>
                             {event.height > 12 && (
-                              <p className="truncate text-xs text-indigo-700">
+                              <p className={`truncate text-xs ${event.colorScheme.textSub}`}>
                                 {event.startTime}
                               </p>
                             )}
                             {event.height > 20 && event.columns < 3 && event.location && (
-                              <p className="truncate text-xs text-indigo-600">
+                              <p className={`truncate text-xs ${event.colorScheme.textSub}`}>
                                 {event.location}
                               </p>
+                            )}
+                            {/* Member dots for multi-member events */}
+                            {event.memberInfos.length > 1 && event.height > 14 && (
+                              <div className="mt-0.5 flex items-center gap-0.5">
+                                {event.memberInfos.map((mi) => (
+                                  <span
+                                    key={mi.id}
+                                    title={mi.name}
+                                    className={`inline-block h-2 w-2 rounded-full ${MEMBER_DOT[mi.color] ?? "bg-slate-400"}`}
+                                  />
+                                ))}
+                              </div>
                             )}
                           </div>
 
@@ -1546,7 +1881,11 @@ export default function CalendarPage() {
         </section>
 
         <aside className="h-[420px] min-h-[340px] min-w-0 sm:h-[500px] lg:h-[calc(100vh-96px)]">
-          <ChatPanel onGhostEventChange={setGhostEvent} />
+          <ChatPanel
+            onGhostEventChange={setGhostEvent}
+            activeMemberId={activeMemberId}
+            members={household?.members as HouseholdMember[] | undefined}
+          />
         </aside>
       </div>
 

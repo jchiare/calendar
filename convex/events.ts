@@ -28,7 +28,38 @@ export const getWeekEvents = query({
   handler: async (ctx, args) => {
     const start = args.weekStart;
     const end = start + 7 * 24 * 60 * 60 * 1000;
-    return getEventsOverlappingRange(ctx, start, end);
+    const events = await getEventsOverlappingRange(ctx, start, end);
+
+    // Enrich events with member info for color coding
+    const enriched = await Promise.all(
+      events.map(async (event) => {
+        // Build member info from memberIds (preferred) or fall back to createdBy
+        const memberInfos: { id: string; name: string; color: string }[] = [];
+        if (event.memberIds && event.memberIds.length > 0) {
+          for (const uid of event.memberIds) {
+            const user = await ctx.db.get(uid);
+            if (user) {
+              memberInfos.push({ id: uid, name: user.name, color: user.color ?? "indigo" });
+            }
+          }
+        } else if (event.createdBy) {
+          const user = await ctx.db.get(event.createdBy);
+          if (user) {
+            memberInfos.push({ id: event.createdBy, name: user.name, color: user.color ?? "indigo" });
+          }
+        }
+
+        return {
+          ...event,
+          // Keep legacy fields for backward compat
+          creatorColor: memberInfos[0]?.color ?? null,
+          creatorName: memberInfos[0]?.name ?? null,
+          // New: all assigned members
+          memberInfos,
+        };
+      })
+    );
+    return enriched;
   }
 });
 
@@ -85,7 +116,9 @@ export const createEvent = mutation({
     description: v.optional(v.string()),
     start: v.number(),
     end: v.number(),
-    location: v.optional(v.string())
+    location: v.optional(v.string()),
+    createdBy: v.optional(v.id("users")),
+    memberIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     validateEvent(args);
@@ -127,6 +160,8 @@ export const createEvent = mutation({
       start: args.start,
       end: args.end,
       location: args.location,
+      createdBy: args.createdBy,
+      memberIds: args.memberIds,
       updatedAt: now,
       createdAt: now
     });
@@ -164,6 +199,8 @@ export const batchCreateEvents = mutation({
       })
     ),
     recurrenceId: v.optional(v.string()),
+    createdBy: v.optional(v.id("users")),
+    memberIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     // Validate all events
@@ -208,6 +245,8 @@ export const batchCreateEvents = mutation({
           start: event.start,
           end: event.end,
           location: event.location,
+          createdBy: args.createdBy,
+          memberIds: args.memberIds,
           recurrence: args.recurrenceId,
           updatedAt: now,
           createdAt: now,
