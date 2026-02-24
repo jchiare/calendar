@@ -42,6 +42,7 @@ export default defineSchema({
     .index("by_workspace", ["workspaceId"])
     .index("by_provider_external", ["provider", "externalId"]),
   events: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     calendarId: v.id("calendars"),
     title: v.string(),
     description: v.optional(v.string()),
@@ -58,6 +59,7 @@ export default defineSchema({
       )
     ),
     createdBy: v.optional(v.id("users")),
+    participantIds: v.optional(v.array(v.id("users"))),
     recurrence: v.optional(v.string()),
     metadata: v.optional(v.any()),
     updatedAt: v.number(),
