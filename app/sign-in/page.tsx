@@ -1,2 +1,38 @@
 import Link from "next/link";
-export default function SignInPage(){return <main className="auth-page"><section className="auth-brand"><div className="brand"><span className="brand-mark">s</span><span>sayso</span></div><div><p>“I spend less time chasing notes and more time thinking about my clients.”</p><span>— Alex, speech-language pathologist</span></div></section><section className="auth-form"><form><p className="eyebrow">WELCOME BACK</p><h1>Sign in to Sayso</h1><p>Use your clinic email and password.</p><label>Email<input type="email" placeholder="you@clinic.com"/></label><label>Password<input type="password" placeholder="••••••••"/></label><button className="primary wide">Sign in</button><small>Invited by your clinic? <Link href="/sign-up">Create your account</Link></small></form></section></main>}
+export default function SignInPage() {
+  return (
+    <main className="auth-page">
+      <section className="auth-brand">
+        <div className="brand">
+          <span className="brand-mark">s</span>
+          <span>sayso</span>
+        </div>
+        <div>
+          <p>
+            “I spend less time chasing notes and more time thinking about my clients.”
+          </p>
+          <span>— Alex, speech-language pathologist</span>
+        </div>
+      </section>
+      <section className="auth-form">
+        <form>
+          <p className="eyebrow">WELCOME BACK</p>
+          <h1>Sign in to Sayso</h1>
+          <p>Use your clinic email and password.</p>
+          <label>
+            Email
+            <input type="email" placeholder="you@clinic.com" />
+          </label>
+          <label>
+            Password
+            <input type="password" placeholder="••••••••" />
+          </label>
+          <button className="primary wide">Sign in</button>
+          <small>
+            Invited by your clinic? <Link href="/sign-up">Create your account</Link>
+          </small>
+        </form>
+      </section>
+    </main>
+  );
+}

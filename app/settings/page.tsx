@@ -1,2 +1,74 @@
 import { AppShell, Avatar, StatusBadge } from "@/components/app-shell";
-export default function SettingsPage(){return <AppShell title="Clinic settings" eyebrow="MANAGE"><div className="settings-tabs"><button className="active">Team</button><button>Availability</button><button>Clinic</button></div><section className="data-card section-card"><div className="section-title"><div><h2>Team members</h2><p>Invite therapists and manage clinic access.</p></div><button className="primary">Invite therapist</button></div>{[{i:"AJ",n:"Alex Johnson",e:"alex@brightpath.com",r:"Therapist",t:"mint"},{i:"SP",n:"Samira Patel",e:"samira@brightpath.com",r:"Therapist",t:"lavender"},{i:"MC",n:"Morgan Chen",e:"morgan@brightpath.com",r:"Admin",t:"apricot"}].map(x=><div className="team-row" key={x.n}><Avatar initials={x.i} tone={x.t}/><div><strong>{x.n}</strong><small>{x.e}</small></div><StatusBadge tone={x.r==="Admin"?"purple":"green"}>{x.r}</StatusBadge><button>•••</button></div>)}</section><section className="data-card section-card availability-card"><div className="section-title"><div><h2>Weekly availability</h2><p>Parents can book open slots within these hours.</p></div><button className="soft-button">＋ Add hours</button></div>{["Monday","Tuesday","Wednesday","Thursday"].map((day)=><div className="hours-row" key={day}><b>{day}</b><span>9:00 AM</span><i>to</i><span>4:30 PM</span><button>×</button></div>)}</section></AppShell>}
+export default function SettingsPage() {
+  return (
+    <AppShell title="Clinic settings" eyebrow="MANAGE">
+      <div className="settings-tabs">
+        <button className="active">Team</button>
+        <button>Availability</button>
+        <button>Clinic</button>
+      </div>
+      <section className="data-card section-card">
+        <div className="section-title">
+          <div>
+            <h2>Team members</h2>
+            <p>Invite therapists and manage clinic access.</p>
+          </div>
+          <button className="primary">Invite therapist</button>
+        </div>
+        {[
+          {
+            i: "AJ",
+            n: "Alex Johnson",
+            e: "alex@brightpath.com",
+            r: "Therapist",
+            t: "mint",
+          },
+          {
+            i: "SP",
+            n: "Samira Patel",
+            e: "samira@brightpath.com",
+            r: "Therapist",
+            t: "lavender",
+          },
+          {
+            i: "MC",
+            n: "Morgan Chen",
+            e: "morgan@brightpath.com",
+            r: "Admin",
+            t: "apricot",
+          },
+        ].map((teamMember) => (
+          <div className="team-row" key={teamMember.n}>
+            <Avatar initials={teamMember.i} tone={teamMember.t} />
+            <div>
+              <strong>{teamMember.n}</strong>
+              <small>{teamMember.e}</small>
+            </div>
+            <StatusBadge tone={teamMember.r === "Admin" ? "purple" : "green"}>
+              {teamMember.r}
+            </StatusBadge>
+            <button>•••</button>
+          </div>
+        ))}
+      </section>
+      <section className="data-card section-card availability-card">
+        <div className="section-title">
+          <div>
+            <h2>Weekly availability</h2>
+            <p>Parents can book open slots within these hours.</p>
+          </div>
+          <button className="soft-button">＋ Add hours</button>
+        </div>
+        {["Monday", "Tuesday", "Wednesday", "Thursday"].map((day) => (
+          <div className="hours-row" key={day}>
+            <b>{day}</b>
+            <span>9:00 AM</span>
+            <i>to</i>
+            <span>4:30 PM</span>
+            <button>×</button>
+          </div>
+        ))}
+      </section>
+    </AppShell>
+  );
+}

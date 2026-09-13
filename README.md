@@ -16,7 +16,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - Next.js 16 on Vercel, with Vercel Blob and hourly Vercel Cron
 - Neon Postgres through Drizzle ORM
 - Better Auth email/password accounts and organization roles
-- OpenRouter through the OpenAI SDK for every AI task
+- OpenAI models through OpenRouter and the OpenAI SDK for every AI task
 - Resend and React Email for transactional messages
 - `unpdf` for text-first IEP extraction with a scanned-page fallback
 
