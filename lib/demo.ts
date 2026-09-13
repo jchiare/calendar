@@ -1,0 +1,7 @@
+export const demoClients = [
+  { id: "11111111-1111-4111-8111-111111111111", name: "Mia Robinson", initials: "MR", age: 7, therapist: "Alex Johnson", parent: "Jordan Robinson", email: "jordan@example.com", next: "Today, 9:00 AM", goals: 3, tone: "apricot" },
+  { id: "22222222-2222-4222-8222-222222222222", name: "Noah Williams", initials: "NW", age: 5, therapist: "Alex Johnson", parent: "Taylor Williams", email: "taylor@example.com", next: "Today, 10:15 AM", goals: 4, tone: "lavender" },
+  { id: "33333333-3333-4333-8333-333333333333", name: "Leo Thompson", initials: "LT", age: 9, therapist: "Alex Johnson", parent: "Morgan Thompson", email: "morgan@example.com", next: "Today, 11:30 AM", goals: 2, tone: "mint" },
+  { id: "44444444-4444-4444-8444-444444444444", name: "Sofia Garcia", initials: "SG", age: 6, therapist: "Alex Johnson", parent: "Casey Garcia", email: "casey@example.com", next: "Today, 1:00 PM", goals: 3, tone: "rose" },
+];
+export const demoGoals = [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", domain: "Articulation", text: "Produce /r/ in initial and medial positions with 80% accuracy.", streak: true }, { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", domain: "Expressive language", text: "Use complete 5–7 word sentences to describe a pictured event.", streak: false }, { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", domain: "Pragmatics", text: "Maintain a conversational topic for three reciprocal turns.", streak: false }];
