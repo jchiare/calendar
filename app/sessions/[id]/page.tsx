@@ -1,0 +1,37 @@
+import { AppShell, Avatar, StatusBadge } from "@/components/app-shell";
+import { SessionEditor } from "@/components/session-editor";
+
+export default async function SessionPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  return (
+    <AppShell
+      title="Session with Mia"
+      eyebrow="WEDNESDAY · 9:00–9:45 AM"
+      action={<StatusBadge tone="orange">In progress</StatusBadge>}
+    >
+      <div className="session-client">
+        <Avatar initials="MR" tone="apricot" />
+        <div>
+          <strong>Mia Robinson</strong>
+          <span>Speech therapy · 45 minutes</span>
+        </div>
+      </div>
+      <div className="next-plan">
+        <span>✦</span>
+        <div>
+          <b>PLAN FROM LAST SESSION</b>
+          <p>
+            Start with five familiar /r/ words, then introduce medial-position targets
+            through the picture-card game. Use visual placement cues before verbal cues.
+          </p>
+        </div>
+        <button>Edit plan</button>
+      </div>
+      <SessionEditor appointmentId={id} clientName="Mia Robinson" />
+    </AppShell>
+  );
+}

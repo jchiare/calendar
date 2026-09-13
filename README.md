@@ -1,53 +1,42 @@
-# Calendar
+# Sayso
 
-A Next.js 16 + Tailwind + Convex starter for a family-focused calendar with AI-assisted scheduling.
+Sayso is a focused speech-therapy clinic workspace for scheduling, session documentation, parent communication, and therapist-reviewed AI assistance.
 
-## Prerequisites
-
-- Node.js 24.13.0 (latest v24 LTS line; see `.nvmrc`)
-
-## Getting Started
+## Run locally
 
 ```bash
-nvm use
 npm install
 npm run dev
 ```
 
-## Convex
+Open [http://localhost:3000](http://localhost:3000).
+
+## Managed stack
+
+- Next.js 16 on Vercel, with Vercel Blob and hourly Vercel Cron
+- Neon Postgres through Drizzle ORM
+- Better Auth email/password accounts and organization roles
+- OpenAI models through OpenRouter and the OpenAI SDK for every AI task
+- Resend and React Email for transactional messages
+- `unpdf` for text-first IEP extraction with a scanned-page fallback
+
+Copy `.env.example` to `.env.local`, configure the managed services, then initialize the schema:
 
 ```bash
-npm run convex:dev
+npm run db:push
 ```
 
-## Environment
+Without `DATABASE_URL`, the UI opens in demo mode so the clinic workflow can be reviewed locally. AI, upload, email, and persistence routes require their corresponding managed-service credentials.
 
-- `NEXT_PUBLIC_CONVEX_URL` is required for live Convex data in the UI.
-- `OPENAI_API_KEY` is optional; if missing, AI falls back to regex parsing.
-- `NEXT_PUBLIC_ENABLE_DEMO_SEED=true` (optional, development-only) enables auto-seeding demo events when the database is empty.
+## HTTP API
 
-## Quality Checks
+All application mutations use App Router route handlers and JSON or multipart requests—there are no Server Actions. The primary endpoints are:
 
-```bash
-npm run typecheck
-npm run check
-```
+- `POST /api/clients` and `PATCH /api/clients/:id/intake`
+- `POST /api/clients/:id/goals`
+- `POST /api/availability`
+- `POST /api/appointments` and `PATCH /api/appointments/:id`
+- `PUT /api/appointments/:id/session` and `PUT /api/appointments/:id/plan`
+- `POST /api/documents` and `POST /api/ai/:task`
 
-## Architecture decisions
-
-- Convex Auth for a simpler stack and fewer moving parts.
-- Webhook + sync queue pattern for robust Google Calendar sync.
-- Explicit conflict resolution UI to avoid losing edits.
-- Apple Calendar (CalDAV) deferred until later.
-
-## Project Structure
-
-- `app/` - Next.js App Router pages
-- `convex/` - Convex schema and functions
-- `PLAN.md` - Product plan and scope
-
-### Routes
-
-- `/` landing page
-- `/calendar` calendar workspace
-- `/admin` admin console
+Each mutation resolves the Better Auth session, verifies the member role and clinic, validates the request with Zod, and returns JSON errors with an appropriate HTTP status.

@@ -1,22 +1,18 @@
-import "./globals.css";
 import type { Metadata } from "next";
-import Providers from "./providers";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Family Calendar",
-  description: "A unified family calendar with AI scheduling."
+  title: "Sayso — Speech therapy, thoughtfully connected",
+  description:
+    "Scheduling, clinical notes, and family communication for modern speech therapy clinics.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>
-        <Providers>
-          <div className="min-h-screen bg-slate-50 text-slate-900">
-            {children}
-          </div>
-        </Providers>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
