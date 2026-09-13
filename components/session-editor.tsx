@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { demoGoals } from "@/lib/demo";
 
@@ -22,6 +23,7 @@ export function SessionEditor({
   appointmentId: string;
   clientName: string;
 }) {
+  const router = useRouter();
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [comments, setComments] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState("");
@@ -105,7 +107,7 @@ export function SessionEditor({
     const result = await response.json();
     setIsSaving(false);
     if (!response.ok) setErrorMessage(result.error ?? "Could not save session");
-    else window.location.assign("/dashboard");
+    else router.push("/dashboard");
   }
   return (
     <div className="session-layout">
