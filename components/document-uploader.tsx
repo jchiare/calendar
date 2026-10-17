@@ -6,8 +6,8 @@ type IepExtractionResult = {
   goals: {
     domain: string;
     text: string;
-    baseline?: string;
-    criterion?: string;
+    baseline: string | null;
+    criterion: string | null;
   }[];
   services: string;
   accommodations: string[];

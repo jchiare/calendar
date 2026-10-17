@@ -4,7 +4,11 @@ import { apiError, ApiError } from "@/lib/api";
 import { addWeeks } from "@/lib/dates";
 import { sendClinicEmail } from "@/lib/email";
 import { requireRole } from "@/lib/permissions";
-import { requireClientAccess } from "@/lib/resource-access";
+import {
+  getClinicTimezone,
+  requireClientAccess,
+  requireClinicTherapist,
+} from "@/lib/resource-access";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -23,6 +27,8 @@ export async function POST(request: Request) {
     const client = await requireClientAccess(actor, input.clientId);
     if (actor.role === "parent" && input.therapistUserId !== client.therapistUserId)
       throw new ApiError(403, "Parents may only book with the assigned therapist");
+    await requireClinicTherapist(actor, input.therapistUserId);
+    const timeZone = await getClinicTimezone(actor.clinicId);
     const created = [];
     for (let week = 0; week < input.repeatWeeks; week++) {
       const [appointment] = await db
@@ -31,7 +37,7 @@ export async function POST(request: Request) {
           clinicId: actor.clinicId,
           clientId: input.clientId,
           therapistUserId: input.therapistUserId,
-          startsAt: addWeeks(input.startsAt, week),
+          startsAt: addWeeks(input.startsAt, week, timeZone),
           minutes: input.minutes,
         })
         .returning();

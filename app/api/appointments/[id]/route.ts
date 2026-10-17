@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { appointments, user } from "@/db/schema";
-import { apiError } from "@/lib/api";
+import { apiError, ApiError } from "@/lib/api";
 import { sendClinicEmail } from "@/lib/email";
 import { requireRole } from "@/lib/permissions";
 import { requireAppointmentAccess } from "@/lib/resource-access";
@@ -19,6 +19,8 @@ export async function PATCH(
     const { status } = z
       .object({ status: z.literal("cancelled") })
       .parse(await request.json());
+    if (row.appointment.status !== "scheduled")
+      throw new ApiError(409, "Only scheduled appointments can be cancelled");
     const [appointment] = await db
       .update(appointments)
       .set({ status, updatedAt: new Date() })

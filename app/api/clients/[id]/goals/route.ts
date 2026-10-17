@@ -9,8 +9,8 @@ import { z } from "zod";
 const goalSchema = z.object({
   domain: z.string().trim().min(1),
   text: z.string().trim().min(1),
-  baseline: z.string().optional(),
-  criterion: z.string().optional(),
+  baseline: z.string().nullish(),
+  criterion: z.string().nullish(),
   keep: z.boolean(),
 });
 export async function POST(

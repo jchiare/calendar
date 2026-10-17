@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { availability } from "@/db/schema";
 import { apiError } from "@/lib/api";
 import { requireRole } from "@/lib/permissions";
+import { requireClinicTherapist } from "@/lib/resource-access";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -20,6 +21,8 @@ export async function POST(request: Request) {
       actor.role === "admin" && input.therapistUserId
         ? input.therapistUserId
         : actor.userId;
+    if (therapistUserId !== actor.userId)
+      await requireClinicTherapist(actor, therapistUserId);
     const [hours] = await db
       .insert(availability)
       .values({
