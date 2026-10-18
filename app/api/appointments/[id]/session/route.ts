@@ -1,10 +1,10 @@
 import { db } from "@/db";
-import { appointments, progress } from "@/db/schema";
-import { apiError } from "@/lib/api";
+import { appointments, goals, progress } from "@/db/schema";
+import { apiError, ApiError } from "@/lib/api";
 import { sendClinicEmail } from "@/lib/email";
 import { requireRole } from "@/lib/permissions";
 import { requireAppointmentAccess } from "@/lib/resource-access";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -29,6 +29,17 @@ export async function PUT(
         ),
       })
       .parse(await request.json());
+    const goalIds = [...new Set(input.progress.map((item) => item.goalId))];
+    if (goalIds.length !== input.progress.length)
+      throw new ApiError(400, "Rate each goal at most once");
+    if (goalIds.length) {
+      const clientGoals = await db
+        .select({ id: goals.id })
+        .from(goals)
+        .where(and(eq(goals.clientId, row.client.id), inArray(goals.id, goalIds)));
+      if (clientGoals.length !== goalIds.length)
+        throw new ApiError(400, "Progress may only be recorded for this client's goals");
+    }
     const [appointment] = await db
       .update(appointments)
       .set({
@@ -39,14 +50,25 @@ export async function PUT(
       })
       .where(eq(appointments.id, id))
       .returning();
+    // Saving the session again replaces the earlier ratings instead of failing
+    // on the one-rating-per-goal-per-appointment index.
     if (input.progress.length)
-      await db.insert(progress).values(
-        input.progress.map((item) => ({
-          ...item,
-          clinicId: actor.clinicId,
-          appointmentId: id,
-        })),
-      );
+      await db
+        .insert(progress)
+        .values(
+          input.progress.map((item) => ({
+            ...item,
+            clinicId: actor.clinicId,
+            appointmentId: id,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [progress.goalId, progress.appointmentId],
+          set: {
+            rating: sql`excluded.rating`,
+            comment: sql`excluded.comment`,
+          },
+        });
     await sendClinicEmail({
       clinicId: actor.clinicId,
       to: row.client.parentEmail,

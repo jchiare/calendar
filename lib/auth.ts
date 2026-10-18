@@ -6,6 +6,7 @@ import { headers } from "next/headers";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { sendClinicEmail } from "./email";
+import { isDemoMode } from "./env";
 
 const statement = {
   client: ["create", "read", "update", "delete"],
@@ -35,7 +36,11 @@ const parent = ac.newRole({
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
-  secret: process.env.BETTER_AUTH_SECRET ?? "sayso-local-development-secret-change-me",
+  // Only the read-only demo may fall back to a public secret; a real deployment
+  // without BETTER_AUTH_SECRET must fail rather than sign sessions with it.
+  secret:
+    process.env.BETTER_AUTH_SECRET ||
+    (isDemoMode ? "sayso-local-development-secret-change-me" : undefined),
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   emailAndPassword: { enabled: true },
   plugins: [

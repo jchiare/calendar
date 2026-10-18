@@ -3,6 +3,7 @@ import { clients } from "@/db/schema";
 import { apiError } from "@/lib/api";
 import { sendClinicEmail } from "@/lib/email";
 import { requireRole } from "@/lib/permissions";
+import { requireClinicTherapist } from "@/lib/resource-access";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
   try {
     const actor = await requireRole(["admin", "therapist"]);
     const input = createClientSchema.parse(await request.json());
+    await requireClinicTherapist(actor, input.therapistUserId);
     const [client] = await db
       .insert(clients)
       .values({ ...input, clinicId: actor.clinicId })

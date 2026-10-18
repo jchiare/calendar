@@ -9,8 +9,9 @@ const extractionSchema = z.object({
     z.object({
       domain: z.string(),
       text: z.string(),
-      baseline: z.string().optional(),
-      criterion: z.string().optional(),
+      // Strict structured outputs require every key, so absent values are null.
+      baseline: z.string().nullable(),
+      criterion: z.string().nullable(),
     }),
   ),
   services: z.string(),
@@ -55,11 +56,46 @@ const systemPromptsByTask: Record<AiTask, string> = {
     "Rank what to work on next from active goals and observed progress. Choose continue, advance, introduce, or pause for every recommendation and offer two feasible activities.",
 };
 
-function serializeWithoutClientName(input: unknown, clientName?: string) {
-  const serializedInput = JSON.stringify(input);
-  return clientName
-    ? serializedInput.replaceAll(clientName, "the client")
-    : serializedInput;
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Notes usually mention the child by first name only, so redact the full name
+// first and then each part of it.
+function redactClientName(text: string, clientName?: string) {
+  const names = [clientName, ...(clientName?.split(/\s+/) ?? [])]
+    .map((name) => name?.trim())
+    .filter((name): name is string => Boolean(name && name.length > 1));
+  return names.reduce(
+    (redacted, name) =>
+      redacted.replace(new RegExp(`\\b${escapeRegExp(name)}\\b`, "gi"), "the client"),
+    text,
+  );
+}
+
+type UserContent = OpenAI.Chat.Completions.ChatCompletionUserMessageParam["content"];
+
+// Scanned pages are sent as image parts; everything else is sent as JSON text.
+function buildUserContent(input: unknown, clientName?: string): UserContent {
+  const scannedPages =
+    input && typeof input === "object" && "scannedPagePngsBase64" in input
+      ? (input as { scannedPagePngsBase64: string[] }).scannedPagePngsBase64
+      : undefined;
+  if (!scannedPages) return redactClientName(JSON.stringify(input), clientName);
+  return [
+    { type: "text", text: "These are the scanned pages of the document, in order." },
+    ...scannedPages.map((page) => ({
+      type: "image_url" as const,
+      image_url: { url: `data:image/png;base64,${page}` },
+    })),
+  ];
+}
+
+function toStrictJsonSchema(task: AiTask) {
+  // OpenAI accepts the schema body without the JSON Schema dialect marker.
+  const schema: Record<string, unknown> = z.toJSONSchema(taskSchemas[task]);
+  delete schema.$schema;
+  return schema;
 }
 
 export async function ask<T extends AiTask>(
@@ -100,7 +136,7 @@ export async function ask<T extends AiTask>(
             },
             {
               role: "user",
-              content: serializeWithoutClientName(input, options.clientName),
+              content: buildUserContent(input, options.clientName),
             },
           ],
           response_format: {
@@ -108,7 +144,7 @@ export async function ask<T extends AiTask>(
             json_schema: {
               name: task,
               strict: true,
-              schema: z.toJSONSchema(taskSchemas[task]),
+              schema: toStrictJsonSchema(task),
             },
           },
           provider: { data_collection: "deny", zdr: true },

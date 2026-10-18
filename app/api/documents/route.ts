@@ -1,4 +1,5 @@
 import { put } from "@vercel/blob";
+import { eq } from "drizzle-orm";
 import { extractText, getDocumentProxy, renderPageAsImage } from "unpdf";
 import { db } from "@/db";
 import { documents } from "@/db/schema";
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
     const actor = await requireRole(["admin", "therapist", "parent"]);
     const form = await request.formData();
     const file = z.instanceof(File).parse(form.get("file"));
-    const clientId = z.string().uuid().parse(form.get("clientId"));
+    const clientId = z.uuid().parse(form.get("clientId"));
     const clientName = z
       .string()
       .optional()
@@ -51,11 +52,14 @@ export async function POST(request: Request) {
       const pages = [];
       for (let page = 1; page <= Math.min(pdf.numPages, 12); page++)
         pages.push(
-          Buffer.from(await renderPageAsImage(pdf, page, { scale: 1.4 })).toString(
-            "base64",
-          ),
+          Buffer.from(
+            await renderPageAsImage(pdf, page, {
+              scale: 1.4,
+              canvasImport: () => import("@napi-rs/canvas"),
+            }),
+          ).toString("base64"),
         );
-      input = { scannedPageImagesBase64: pages };
+      input = { scannedPagePngsBase64: pages };
     }
     const result = await ask("extract_iep", input, {
       clinicId: actor.clinicId,
@@ -64,14 +68,14 @@ export async function POST(request: Request) {
     await db
       .update(documents)
       .set({ extracted: result, status: "done", updatedAt: new Date() })
-      .where((await import("drizzle-orm")).eq(documents.id, document.id));
+      .where(eq(documents.id, document.id));
     return NextResponse.json({ documentId: document.id, ...result });
   } catch (error) {
     if (documentId)
       await db
         .update(documents)
         .set({ status: "failed", updatedAt: new Date() })
-        .where((await import("drizzle-orm")).eq(documents.id, documentId))
+        .where(eq(documents.id, documentId))
         .catch(() => undefined);
     return apiError(error);
   }
